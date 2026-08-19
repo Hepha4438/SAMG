@@ -1,0 +1,39 @@
+# Deep Learning & Math (Strictly locking NumPy < 2.0.0 to prevent C-API breaking changes)
+torch>=2.0.0
+numpy>=1.24.0,<2.0.0
+numpy-quaternion>=2024.0.13
+scipy>=1.9.0
+pandas>=2.0.0
+
+# Graph Neural Networks & Geometric Computing
+torch-scatter>=2.1.0
+torch-geometric>=2.3.0
+torch-sparse>=0.6.15
+torch-cluster>=1.6.3
+
+kornia>=0.6.0
+
+# Protein Language Models (ESM-2 for evolutionary embeddings)
+fair-esm>=2.0.0
+
+# Cheminformatics & Computational Biology
+rdkit>=2023.03.1
+biopython>=1.81
+
+# Structure Preparation (Explicit Hydrogens & PROPKA)
+pdb2pqr>=3.6.1
+
+# Evaluation & Docking (Step 7)
+vina>=1.2.3
+
+# Training Framework & Logging (Step 6)
+pytorch-lightning>=2.0.0
+wandb>=0.15.0
+
+# Dataset & Memory Management
+lmdb>=1.4.1
+tqdm>=4.66.0
+
+# Configuration Management & Notebooks
+omegaconf>=2.3.0
+ipykernel>=6.0.0
