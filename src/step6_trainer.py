@@ -367,7 +367,7 @@ if __name__ == "__main__":
     logger = WandbLogger(project="SAMG-Drug-Design", name="sequence_generator_optimized")
     logging_callback = SAMGLoggingCallback(log_dir=os.path.join(SAMG_ROOT, "logs"))
     trainer = pl.Trainer(
-        max_epochs=40,
+        max_epochs=25,
         accelerator="gpu",           
         devices=1,                   
         precision="32-true",
