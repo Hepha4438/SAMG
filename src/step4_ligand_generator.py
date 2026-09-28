@@ -6,6 +6,22 @@ import torch.nn as nn
 from step2_mdn_module import AutoregressiveFlowLayer
 from step3_attention_hub import MultiDifferentialCrossAttention
 
+# Dẫn xuất giá trị 0.1 (không phải con số tùy ý): trên một hướng suy biến, MLE
+# sẽ đẩy sigma về đúng bề dày thật của dữ liệu, tức DEQUANT_SIGMA. Độ cứng của
+# số hạng bậc hai khi đó là 1/sigma^2:
+# - sigma_n = 1e-2 -> log_scale tối ưu ≈ ln(0.01) = -4.61, sát sàn clip -5.0,
+#   độ cứng 1e4. Vẫn đủ để vòng phản hồi dương chạy. Clip vẫn là thứ chịu lực.
+# - sigma_n = 0.1  -> log_scale tối ưu ≈ -2.30, độ cứng 1e2. Giảm 100 lần,
+#   và điểm tối ưu nằm HẲN trên sàn clip nên clip thôi chịu lực.
+#
+# Ý nghĩa vật lý: 0.1 trong không gian chuẩn hóa tương đương 0.1 * 3.035 = 0.30 Å
+# nhiễu vị trí cho d, và ~5 độ sai số góc quay. Cả hai đều cùng cỡ với sai số tọa
+# độ tinh thể học, nên đây không phải bóp méo dữ liệu mà là nhiễu trung thực.
+#
+# Đây là sàn mật độ chống likelihood phân kỳ trên tập suy biến (Mục 4.2), không
+# phải regularizer tùy ý; có thể anneal giảm dần sau khi huấn luyện đã ổn định.
+DEQUANT_SIGMA = 0.1
+
 class PositionalEncoding(nn.Module):
     def __init__(self, hidden_dim, max_len=5000):
         super().__init__()
@@ -72,11 +88,11 @@ class DualStreamLigandGenerator(nn.Module):
         
         if target_7d is not None:
             target_7d_flat = target_7d.view(batch_size * seq_len, 7)
-            # Dequantization: Làm dày mặt cầu quaternion
-            noise = torch.randn_like(target_7d_flat) * 1e-3
-            target_noisy = target_7d_flat + noise
             # Standardization: Áp dụng Mean/Std thực tế
-            target_scaled = (target_noisy - self.shift_factors) / self.scale_factors
+            target_scaled = (target_7d_flat - self.shift_factors) / self.scale_factors
+            # Dequantization: Làm dày mặt cầu quaternion (trong không gian đã chuẩn hóa)
+            noise = torch.randn_like(target_scaled) * DEQUANT_SIGMA
+            target_scaled = target_scaled + noise
             
             loss_geo_flat = self.geometric_head(v_context_flat, target=target_scaled)
             loss_geo = loss_geo_flat.view(batch_size, seq_len)
