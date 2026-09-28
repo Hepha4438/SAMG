@@ -185,10 +185,16 @@ class SAMGLightningModule(pl.LightningModule):
         #     edge_feat_dim=config.protein_encoder.edge_feat_dim,
         #     num_r_gaussian=config.protein_encoder.num_r_gaussian
         # )
+        if scale_factors is None:
+            import warnings
+            warnings.warn("scale_factors is None: standardization sẽ là no-op trong DualStreamLigandGenerator.")
+
         self.generator = DualStreamLigandGenerator(
-            vocab_size=vocab_size, 
-            hidden_dim=config.hidden_dim, 
-            num_heads=config.num_heads, 
+            vocab_size=vocab_size,
+            hidden_dim=config.hidden_dim,
+            num_heads=config.num_heads,
+            shift_factors=shift_factors,
+            scale_factors=scale_factors,
         )
         self.global_loss = GlobalLoss(
             lambda_token=config.loss_weights.token, 
