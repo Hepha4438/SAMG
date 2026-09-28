@@ -12,6 +12,7 @@ class SAMGLogger:
         self.loss_file = os.path.join(self.log_dir, "epoch_losses.csv")
         self.hw_file = os.path.join(self.log_dir, "hardware_profiler.csv")
         self.err_file = os.path.join(self.log_dir, "error_reports.txt")
+        self.flow_scale_file = os.path.join(self.log_dir, "flow_scale_trace.csv")
         self.error_buffer = defaultdict(int)
 
         # Khởi tạo Header cho CSV nếu file chưa tồn tại
@@ -19,11 +20,22 @@ class SAMGLogger:
             with open(self.loss_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(["Epoch", "Total_Loss", "Token_Loss", "Geo_Loss", "Pocket_Loss", "Int_Loss", "Geo_Loss_Unclamped"])
-        
+
         if not os.path.exists(self.hw_file):
             with open(self.hw_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(["Epoch", "Data_Load_Time_sec", "Model_Compute_Time_sec"])
+
+        # P1-1: thứ tự dim cố định d, theta, phi, qx, qy, qz, qw
+        if not os.path.exists(self.flow_scale_file):
+            with open(self.flow_scale_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                dim_names = ["d", "theta", "phi", "qx", "qy", "qz", "qw"]
+                header = (["Epoch"]
+                          + [f"logscale_mean_{d}" for d in dim_names]
+                          + [f"pinfrac_{d}" for d in dim_names]
+                          + ["nll_median", "nll_p99"])
+                writer.writerow(header)
 
     def log_losses(self, epoch, loss_dict):
         with open(self.loss_file, 'a', newline='', encoding='utf-8') as f:
@@ -37,6 +49,18 @@ class SAMGLogger:
                 f"{loss_dict.get('loss_int', 0):.4f}",
                 f"{loss_dict.get('loss_geo_unclamped', 0):.4f}"
             ])
+
+    def log_flow_scale_stats(self, epoch, stats):
+        dim_names = ["d", "theta", "phi", "qx", "qy", "qz", "qw"]
+        if stats is None:
+            stats = {}
+        with open(self.flow_scale_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            row = [epoch]
+            row += [stats.get(f"logscale_mean_{d}", "") for d in dim_names]
+            row += [stats.get(f"pinfrac_{d}", "") for d in dim_names]
+            row += [stats.get("nll_median", ""), stats.get("nll_p99", "")]
+            writer.writerow(row)
 
     def log_hardware(self, epoch, cpu_time, compute_time):
         with open(self.hw_file, 'a', newline='', encoding='utf-8') as f:
@@ -104,3 +128,9 @@ class SAMGLoggingCallback(pl.Callback):
         # Ghi ra ổ cứng (Chỉ ghi 1 lần duy nhất mỗi epoch)
         self.sys_logger.log_losses(epoch, loss_dict)
         self.sys_logger.log_hardware(epoch, self.epoch_cpu_time, self.epoch_compute_time)
+
+        # P1-1: instrumentation log_scale/pinfrac/NLL của AutoregressiveFlowLayer
+        geometric_head = pl_module.generator.geometric_head
+        scale_stats = geometric_head.scale_stats()
+        self.sys_logger.log_flow_scale_stats(epoch, scale_stats)
+        geometric_head.reset_scale_stats()

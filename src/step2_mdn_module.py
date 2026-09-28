@@ -17,6 +17,9 @@ def custom_knn_graph(x, k=32, batch=None, loop=False, flow='source_to_target', c
 pyg_nn.knn_graph = custom_knn_graph
 # ----------------------------
 
+# P1-1: thứ tự 7 chiều cố định cho instrumentation log_scale
+DIM_NAMES = ["d", "theta", "phi", "qx", "qy", "qz", "qw"]
+
 class AutoregressiveFlowLayer(nn.Module):
     """
     Conditional Masked Autoregressive Flow (MAF) cho không gian 7D.
@@ -45,6 +48,48 @@ class AutoregressiveFlowLayer(nn.Module):
         self.register_buffer("base_loc", torch.zeros(out_dim))
         self.register_buffer("base_scale", torch.ones(out_dim))
 
+        # --- P1-1: Instrumentation log_scale (KHÔNG vào state_dict) ---
+        self._ls_floor = self.transform.kwargs.get("log_scale_min_clip", -5.0)
+        self._ls_sum = torch.zeros(out_dim)
+        self._pin_sum = torch.zeros(out_dim)
+        self._ls_count = 0
+        self._nll_reservoir = []
+
+        def _log_scale_hook(module, input, output):
+            if not self.training:
+                return
+            with torch.no_grad():
+                ls = output[1].detach()
+                self._ls_sum += ls.sum(0).cpu()
+                self._pin_sum += (ls <= self._ls_floor + 1e-3).float().sum(0).cpu()
+                self._ls_count += ls.shape[0]
+
+        self.arn.register_forward_hook(_log_scale_hook)
+
+    def scale_stats(self):
+        if self._ls_count == 0:
+            return None
+        mean_ls = self._ls_sum / self._ls_count
+        pinfrac = self._pin_sum / self._ls_count
+        stats = {}
+        for i, name in enumerate(DIM_NAMES):
+            stats[f"logscale_mean_{name}"] = mean_ls[i].item()
+            stats[f"pinfrac_{name}"] = pinfrac[i].item()
+        if self._nll_reservoir:
+            nll_tensor = torch.tensor(self._nll_reservoir)
+            stats["nll_median"] = nll_tensor.median().item()
+            stats["nll_p99"] = torch.quantile(nll_tensor, 0.99).item()
+        else:
+            stats["nll_median"] = None
+            stats["nll_p99"] = None
+        return stats
+
+    def reset_scale_stats(self):
+        self._ls_sum.zero_()
+        self._pin_sum.zero_()
+        self._ls_count = 0
+        self._nll_reservoir = []
+
     def forward(self, h, target=None):
         """
         Args:
@@ -66,6 +111,18 @@ class AutoregressiveFlowLayer(nn.Module):
         if target is not None:
             # LUỒNG TRAINING: Tính Exact Log-Likelihood
             log_prob = flow_dist.log_prob(target)
+
+            # --- P1-1: Reservoir cho NLL (median/p99 chính xác cuối epoch) ---
+            with torch.no_grad():
+                nll_flat = (-log_prob).detach().flatten().cpu()
+                n = nll_flat.numel()
+                take = min(512, n)
+                if take > 0:
+                    idx = torch.randperm(n)[:take]
+                    self._nll_reservoir.extend(nll_flat[idx].tolist())
+                    if len(self._nll_reservoir) > 20000:
+                        self._nll_reservoir = self._nll_reservoir[-20000:]
+
             return -log_prob
         else:
             # LUỒNG INFERENCE (STEP 7): Lấy mẫu một tọa độ mới
