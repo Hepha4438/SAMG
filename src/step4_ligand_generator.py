@@ -102,6 +102,15 @@ class DualStreamLigandGenerator(nn.Module):
             sampled_scaled_flat = self.geometric_head(v_context_flat, target=None)
             # Inverse Scale: Lôi từ phân phối chuẩn N(0,1) ra kích thước vật lý thật
             sampled_real_flat = (sampled_scaled_flat * self.scale_factors) + self.shift_factors
+
+            # Chuẩn hóa quaternion và ràng buộc miền giá trị (d, theta, phi) SAU inverse-scale
+            q = sampled_real_flat[:, 3:7]
+            q = q / q.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+            d = sampled_real_flat[:, 0:1].clamp_min(0.0)
+            theta = sampled_real_flat[:, 1:2].clamp(0.0, math.pi)
+            phi = torch.atan2(torch.sin(sampled_real_flat[:, 2:3]), torch.cos(sampled_real_flat[:, 2:3]))
+            sampled_real_flat = torch.cat([d, theta, phi, q], dim=-1)
+
             sampled_7d = sampled_real_flat.view(batch_size, seq_len, 7)
             
         return logits_vocab, loss_geo, sampled_7d, attn_weights

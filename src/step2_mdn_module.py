@@ -70,13 +70,10 @@ class AutoregressiveFlowLayer(nn.Module):
         else:
             # LUỒNG INFERENCE (STEP 7): Lấy mẫu một tọa độ mới
             sampled = flow_dist.sample()
-            
-            # Tự động chuẩn hóa Quaternion để chống lỗi Gimbal Lock
-            spatial = sampled[..., :3]
-            quat = sampled[..., 3:7]
-            quat = quat / quat.norm(dim=-1, keepdim=True).clamp_min(1e-8)
-            
-            return torch.cat([spatial, quat], dim=-1)
+
+            # Chuẩn hóa Quaternion đã chuyển sang step4, SAU inverse-scale (chuẩn hóa
+            # ở đây, trước phép affine scale/shift, sẽ bị phép affine phá vỡ chuẩn đơn vị).
+            return sampled
             
 # ==============================================================================
 # SCRIPT TEST: OVERFIT ON A MOCK BATCH (AUTOREGRESSIVE FLOW)
