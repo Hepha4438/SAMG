@@ -76,7 +76,7 @@ class MultiDifferentialCrossAttention(nn.Module):
 
 if __name__ == "__main__":
     print("[*] Testing Step 3: Multi-Differential Cross-Attention Hub with 1 Query, 1 Positive Key, 3 Negative Keys...")
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = 1
     seq_len = 1
     hidden_dim = 64

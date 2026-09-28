@@ -47,10 +47,9 @@ class StaticEGNN(nn.Module):
     Extracts geometric features but freezes coordinate updates (update_x=False) 
     to drastically reduce VRAM usage.
     """
-    def __init__(self, num_layers=4, hidden_dim=256, edge_feat_dim=4, num_r_gaussian=20, k=16, cutoff=10.0):
+    def __init__(self, num_layers=4, hidden_dim=256, edge_feat_dim=5, num_r_gaussian=20, k=16, cutoff=10.0):
         super().__init__()
         # EGNN initialized with update_x=False to act as a rigid feature extractor
-        # edge_feat_dim=4 matches _build_edge_type (4 classes), num_r_gaussian=20 matches GaussianSmearing offset length
         self.egnn = EGNN(
             num_layers=num_layers,
             hidden_dim=hidden_dim,
