@@ -279,6 +279,7 @@ class SAMGLightningModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss, loss_dict = self.forward(batch)
         self.log("val/total_loss", loss, batch_size=batch.num_graphs, sync_dist=True)
+        self.log("val_total_loss", loss, batch_size=batch.num_graphs, sync_dist=True)
         return loss
 
     def configure_optimizers(self):
@@ -350,8 +351,13 @@ if __name__ == "__main__":
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(SAMG_ROOT, "saved_checkpoints_flow"),
-        filename="samg-opt-{epoch:03d}-{val/total_loss:.4f}",
-        monitor="val/total_loss", mode="min", save_top_k=2, save_last=True
+        filename="samg-opt-{epoch:03d}-{val_total_loss:.4f}",
+        monitor="val_total_loss", mode="min", save_top_k=3, save_last=True
+    )
+    periodic_checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join(SAMG_ROOT, "saved_checkpoints_flow"),
+        filename="periodic-{epoch:03d}",
+        every_n_epochs=5, save_top_k=-1, save_last=False
     )
 
     logger = WandbLogger(project="SAMG-Drug-Design", name="sequence_generator_optimized")
@@ -362,7 +368,7 @@ if __name__ == "__main__":
         devices=1,                   
         precision="32-true",
         logger=logger,
-        callbacks=[checkpoint_callback, logging_callback],
+        callbacks=[checkpoint_callback, periodic_checkpoint_callback, logging_callback],
         log_every_n_steps=10,
         gradient_clip_val=1.0,          
         accumulate_grad_batches=2     
