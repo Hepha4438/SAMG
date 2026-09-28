@@ -33,7 +33,7 @@ def test_step3_real_data():
     
     # Fetch real pairs
     real_batch = next(iter(dataloader))
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     real_batch = real_batch.to(device)
 
     hidden_dim = 256

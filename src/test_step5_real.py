@@ -34,7 +34,7 @@ def test_step5_real_data():
     dataset = PocketLigandPairDataset(raw_path=raw_path, index_path=index_path, pocket_type="pocket")
     dataloader = ProteinLigandDataLoader(dataset, batch_size=1, shuffle=False)
     real_batch = next(iter(dataloader))
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     real_batch = real_batch.to(device)
 
     with open(pkl_path, "rb") as f:

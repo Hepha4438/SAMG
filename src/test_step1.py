@@ -64,7 +64,7 @@ def test_step1_forward_real_data():
         print("[!] Error: Dataloader is still empty. Please check your physical data_folder files!")
         return
 
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     real_batch = real_batch.to(device)
 
     # Trích xuất Tensor gốc từ Dataloader

@@ -104,7 +104,7 @@ class EGNN(nn.Module):
         edge_type[n_src & ~n_dst] = 1
         edge_type[~n_src & n_dst] = 2
         edge_type[~n_src & ~n_dst] = 3
-        edge_type = F.one_hot(edge_type, num_classes=4)
+        edge_type = F.one_hot(edge_type, num_classes=5)
         return edge_type
 
     def forward(self, h, x, mask_ligand, batch, return_all=False):

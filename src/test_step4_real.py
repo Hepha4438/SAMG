@@ -40,7 +40,7 @@ def test_step4_real_data():
     print(f"    -> Built dynamic vocabulary (Size: {vocab_size}): {vocab}")
     
     # 3. Prepare Tensors for Teacher Forcing Training
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Autoregressive shifting: Predict step t+1 given step 1..t
     # Input : [SOS, Frag1, Frag2, Frag3]

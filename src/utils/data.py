@@ -244,7 +244,7 @@ def compute_residue_transforms(
     protein_atom_name       : List[str],
     protein_atom_to_aa_name : List[str],
     protein_atom_to_aa_group: np.ndarray,
-) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
     residue_index: Dict[int, List[int]] = {}
     for i, gid in enumerate(protein_atom_to_aa_group):
@@ -252,9 +252,9 @@ def compute_residue_transforms(
 
     quats, rot_vecs, translations = [], [], []
     chi_apo_all, chi_holo_all, chi_mask_all = [], [], []
+    valid_gids = []
 
-    for idxs in residue_index.values():
-        # —— 非氢原子坐标
+    for gid, idxs in residue_index.items():
         atom_apo, atom_holo = {}, {}
         for i in idxs:
             name = protein_atom_name[i]
@@ -263,20 +263,17 @@ def compute_residue_transforms(
             atom_apo [name] = protein_pos_apo[i]
             atom_holo[name] = protein_pos_holo[i]
 
-        # —— 只保留 N, CA, C
+        # Kiểm tra nghiêm ngặt: Nếu thiếu N, CA, C thì bỏ qua residue này VÀ ghi nhận lại để lọc atom
         try:
             P = np.stack([atom_apo [a] for a in ("N", "CA", "C")])
             Q = np.stack([atom_holo[a] for a in ("N", "CA", "C")])
         except KeyError:
             continue
 
-        # t_, R = get_align_rotran(P.copy(), Q.copy())
-        t, R = get_align_rotran(Q.copy(), P.copy())  # Q → P
-        # t, R = get_align_rotran_kabsch(Q.copy(), P.copy())
+        t, R = get_align_rotran(Q.copy(), P.copy())  
         rotvec = Rotation.from_matrix(R.T).as_rotvec()
-        # Convert rot_vec to quaternion
-        q = quaternion.from_rotation_matrix(R.T)  # 注意：R.T 是因为 Korn
-        q_array = np.array([q.w, q.x, q.y, q.z])  # 四元数转换为数组
+        q = quaternion.from_rotation_matrix(R.T)  
+        q_array = np.array([q.w, q.x, q.y, q.z])  
 
         resname           = protein_atom_to_aa_name[idxs[0]]
         chi_apo, mask     = compute_chis_one_res(atom_apo,  resname)
@@ -288,17 +285,17 @@ def compute_residue_transforms(
         chi_apo_all.append(chi_apo)
         chi_holo_all.append(chi_holo)
         chi_mask_all.append(mask)
+        valid_gids.append(gid)
 
-    # rotations    = torch.tensor(rot_vecs, dtype=torch.float32)  # (M,3)
-    rotations    = torch.tensor(quats, dtype=torch.float32)  # (M,4) 四元数
-    rot_vecs    = torch.tensor(rot_vecs, dtype=torch.float32)  # (M,3)
-    translations = torch.tensor(translations, dtype=torch.float32)  # (M,3)
-    chi_apo_all  = torch.tensor(chi_apo_all, dtype=torch.float32)  # (M,5)
-    chi_holo_all = torch.tensor(chi_holo_all, dtype=torch.float32)  # (M,5)
-    chi_mask_all = torch.tensor(chi_mask_all, dtype=torch.int64)  # (M,5)
+    # Tối ưu hóa: Gom thành numpy array khối lớn trước khi đưa vào PyTorch để tăng tốc độ và tránh cảnh báo
+    rotations    = torch.tensor(np.array(quats), dtype=torch.float32)  
+    rot_vecs     = torch.tensor(np.array(rot_vecs), dtype=torch.float32)  
+    translations = torch.tensor(np.array(translations), dtype=torch.float32)  
+    chi_apo_all  = torch.tensor(np.array(chi_apo_all), dtype=torch.float32)  
+    chi_holo_all = torch.tensor(np.array(chi_holo_all), dtype=torch.float32)  
+    chi_mask_all = torch.tensor(np.array(chi_mask_all), dtype=torch.int64)  
 
     return rotations, rot_vecs, translations, chi_apo_all, chi_holo_all, chi_mask_all
-
 
 chi1_bond_dict = {
     "ALA":None,
@@ -419,14 +416,19 @@ def apply_transforms(
     new_pos = np.einsum('ij,ijk->ik', protein_pos, R_atom) + t_atom
 
     # —— 2. χ 内旋 —— -------------------------------------------------
-    for gid, row in gid2row.items():
-        # residue 索引 & 名称
+    num_valid_res = chi_mask.shape[0]
+    gid_unique = np.unique(protein_atom_to_aa_group)
+
+    for i in range(min(num_valid_res, len(gid_unique))):
+        gid = gid_unique[i]
         idxs     = np.where(protein_atom_to_aa_group == gid)[0]
+        if len(idxs) == 0:
+            continue
         resname  = protein_atom_to_aa_name[idxs[0]]
         name2idx = {protein_atom_name[k]: k for k in idxs}
 
-        for chi_slot in range(7):
-            if not chi_mask[row, chi_slot]:
+        for chi_slot in range(5):
+            if chi_mask[i, chi_slot] == 0:
                 continue
             bond_dict = CHI_BOND_DICTS[chi_slot]
             if resname not in bond_dict or bond_dict[resname] is None:
@@ -434,7 +436,7 @@ def apply_transforms(
 
             atom1, atom2, rot_atoms = bond_dict[resname]
             if atom1 not in name2idx or atom2 not in name2idx:
-                continue  # 缺轴原子
+                continue  
             p1 = new_pos[name2idx[atom1]]
             p2 = new_pos[name2idx[atom2]]
             axis = p2 - p1
@@ -442,7 +444,7 @@ def apply_transforms(
             if norm < 1e-6:
                 continue
             axis_unit = axis / norm
-            theta     = chi_update[row, chi_slot]     # Δχ
+            theta     = chi_update[i, chi_slot]     
             rot_mat   = R.from_rotvec(axis_unit * theta).as_matrix()
 
             for at in rot_atoms:
@@ -497,14 +499,19 @@ def apply_transforms_tensor(
     )
 
     # 2️⃣ χ 内旋
+    num_valid_res = chi_mask.shape[0]
     gid_unique = torch.unique(row_idx).tolist()
-    for row, gid in enumerate(gid_unique):
+    
+    for i in range(min(num_valid_res, len(gid_unique))):
+        gid = gid_unique[i]
         idxs = (row_idx == gid).nonzero(as_tuple=True)[0]
+        if len(idxs) == 0:
+            continue
         resname = protein_atom_to_aa_name[idxs[0].item()]
-        name2idx = {protein_atom_name[i.item()]: i.item() for i in idxs}
+        name2idx = {protein_atom_name[i_atom.item()]: i_atom.item() for i_atom in idxs}
 
         for chi_slot in range(5):
-            if chi_mask[row, chi_slot] == 0:
+            if chi_mask[i, chi_slot] == 0:
                 continue
             bond_dict = CHI_BOND_DICTS[chi_slot]
             if resname not in bond_dict or bond_dict[resname] is None:
@@ -520,7 +527,7 @@ def apply_transforms_tensor(
             if norm < 1e-6:
                 continue
             axis_unit = axis / norm
-            theta     = chi_update[row, chi_slot]
+            theta     = chi_update[i, chi_slot]  
             rot_mat   = K.geometry.conversions.axis_angle_to_rotation_matrix((axis_unit * theta).unsqueeze(0))[0]
 
             for at in rot_atoms:
@@ -544,39 +551,39 @@ def apply_transforms_tensor_batch(
     chi_mask: torch.Tensor,                   # (M,5)  χ 角是否更新
     protein_translations_batch: torch.Tensor, # (M,)   每个残基属于哪条蛋白
 ) -> torch.Tensor:
-    """
-    Batched version of `apply_transforms_tensor`.
-
-    * `protein_element_batch[i]` 给出第 i 个原子对应的蛋白 id。
-    * `protein_translations_batch[j]` 给出第 j 个残基 (即 rotations[j]) 对应的蛋白 id。
-    * `protein_atom_to_aa_group` 在 **每条蛋白内部** 都是 0,1,2,... 重新编号。
-    返回值顺序与输入 atoms 顺序一致。
-    """
     device = protein_pos.device
     new_pos = protein_pos.clone()
 
     num_proteins = len(protein_atom_name)
     assert num_proteins == len(protein_atom_to_aa_name), "两份列表长度应一致"
 
-    # 逐条蛋白处理：掩码切片 → 调用单蛋白版本 → 回填
+    # Con trỏ theo dõi vị trí cắt cho các mảng residue (tránh lệch shape do batch collate)
+    res_pointer = 0
+
     for p_idx in range(num_proteins):
-        # atoms 属于这条蛋白的布尔掩码
         atom_mask = (protein_element_batch.squeeze(-1) == p_idx)
-        if atom_mask.sum() == 0:
+        num_atoms_p = atom_mask.sum().item()
+        if num_atoms_p == 0:
             continue
 
-        # residues 属于这条蛋白的布尔掩码
-        resid_mask = (protein_translations_batch.squeeze(-1) == p_idx)
+        # Xác định số lượng residue thực tế có trong protein thứ p_idx dựa trên aa_group của chính nó
+        aa_group_p = protein_atom_to_aa_group[atom_mask]
+        num_res_p = int(aa_group_p.max().item()) + 1 if num_atoms_p > 0 else 0
 
-        # --- 切出当前蛋白的数据 ---
-        pos_p            = protein_pos[atom_mask]                         # (N_p,3)
-        atom_name_p      = protein_atom_name[p_idx]                       # List[str]
-        aa_name_p        = protein_atom_to_aa_name[p_idx]                 # List[str]
-        aa_group_p       = protein_atom_to_aa_group[atom_mask]            # (N_p,)
-        rotations_p      = rotations[resid_mask]                          # (M_p,4)
-        translations_p   = translations[resid_mask]                       # (M_p,3)
-        chi_update_p     = chi_update[resid_mask]                         # (M_p,5)
-        chi_mask_p       = chi_mask[resid_mask]                           # (M_p,5)
+        if num_res_p == 0:
+            continue
+
+        # Cắt chính xác số lượng residue thuộc về protein này bằng con trỏ tuần tự
+        pos_p            = protein_pos[atom_mask]
+        atom_name_p      = protein_atom_name[p_idx]
+        aa_name_p        = protein_atom_to_aa_name[p_idx]
+        
+        rotations_p      = rotations[res_pointer : res_pointer + num_res_p]
+        translations_p   = translations[res_pointer : res_pointer + num_res_p]
+        chi_update_p     = chi_update[res_pointer : res_pointer + num_res_p]
+        chi_mask_p       = chi_mask[res_pointer : res_pointer + num_res_p]
+
+        res_pointer += num_res_p
 
         # --- 调用单蛋白函数 ---
         new_pos_p = apply_transforms_tensor(
@@ -590,7 +597,6 @@ def apply_transforms_tensor_batch(
             chi_mask_p,
         )
 
-        # --- 把结果写回到总张量 ---
         new_pos[atom_mask] = new_pos_p
 
     return new_pos
@@ -813,24 +819,37 @@ def parse_pdbbind_index_file(path):
 def parse_sdf_file(path):
     fdefName = os.path.join(RDConfig.RDDataDir, 'BaseFeatures.fdef')
     factory = ChemicalFeatures.BuildFeatureFactory(fdefName)
-    # read mol
+    
+    # 1. Đọc file với sanitize=False để tránh crash ngay từ đầu
     if path.endswith('.sdf'):
         rdmol = Chem.MolFromMolFile(path, sanitize=False)
     elif path.endswith('.mol2'):
         rdmol = Chem.MolFromMol2File(path, sanitize=False)
     else:
-        raise ValueError
-    Chem.SanitizeMol(rdmol)
-    rdmol = Chem.RemoveHs(rdmol)
+        raise ValueError(f"Unsupported file format: {path}")
+    
+    if rdmol is None:
+        return None
 
-    # Remove Hydrogens.
-    # rdmol = next(iter(Chem.SDMolSupplier(path, removeHs=True)))
+    # 2. Kiểm tra hóa trị an toàn bằng try-except để chặn AtomValenceException
+    try:
+        Chem.SanitizeMol(rdmol)
+    except Exception as e:
+        print(f"[!] Cảnh báo: Bỏ qua phân tử lỗi hóa trị tại {path}: {e}")
+        return None
+
+    # Xóa Hydro
+    rdmol = Chem.RemoveHs(rdmol)
     rd_num_atoms = rdmol.GetNumAtoms()
-    feat_mat = np.zeros([rd_num_atoms, len(ATOM_FAMILIES)], dtype=np.compat.long)
+    
+    if rd_num_atoms == 0:
+        return None
+
+    feat_mat = np.zeros([rd_num_atoms, len(ATOM_FAMILIES)], dtype=int)
     for feat in factory.GetFeaturesForMol(rdmol):
         feat_mat[feat.GetAtomIds(), ATOM_FAMILIES_ID[feat.GetFamily()]] = 1
 
-    # Get hybridization in the order of atom idx.
+    # Lấy kiểu lai hóa (hybridization)
     hybridization = []
     for atom in rdmol.GetAtoms():
         hybr = str(atom.GetHybridization())
@@ -841,6 +860,9 @@ def parse_sdf_file(path):
 
     ptable = Chem.GetPeriodicTable()
 
+    if len(rdmol.GetConformers()) == 0:
+        return None
+        
     pos = np.array(rdmol.GetConformers()[0].GetPositions(), dtype=np.float32)
     element = []
     accum_pos = 0
@@ -852,24 +874,26 @@ def parse_sdf_file(path):
         atom_weight = ptable.GetAtomicWeight(atom_num)
         accum_pos += pos[atom_idx] * atom_weight
         accum_mass += atom_weight
-    center_of_mass = accum_pos / accum_mass
+        
+    center_of_mass = accum_pos / accum_mass if accum_mass > 0 else np.zeros(3, dtype=np.float32)
     element = np.array(element, dtype=np.int64)
 
-    # in edge_type, we have 1 for single bond, 2 for double bond, 3 for triple bond, and 4 for aromatic bond.
+    # Trích xuất liên kết (bonds)
     row, col, edge_type = [], [], []
     for bond in rdmol.GetBonds():
         start = bond.GetBeginAtomIdx()
         end = bond.GetEndAtomIdx()
         row += [start, end]
         col += [end, start]
-        edge_type += 2 * [BOND_TYPES[bond.GetBondType()]]
+        edge_type += 2 * [BOND_TYPES.get(bond.GetBondType(), 1)]
 
     edge_index = np.array([row, col], dtype=np.int64)
     edge_type = np.array(edge_type, dtype=np.int64)
 
-    perm = (edge_index[0] * rd_num_atoms + edge_index[1]).argsort()
-    edge_index = edge_index[:, perm]
-    edge_type = edge_type[perm]
+    if edge_index.shape[1] > 0:
+        perm = (edge_index[0] * rd_num_atoms + edge_index[1]).argsort()
+        edge_index = edge_index[:, perm]
+        edge_type = edge_type[perm]
 
     data = {
         'smiles': Chem.MolToSmiles(rdmol),

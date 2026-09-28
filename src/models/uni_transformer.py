@@ -173,7 +173,7 @@ class AttentionLayerO2TwoUpdateNodeGeneral(nn.Module):
             edge_feat = None
 
         rel_x = x[dst] - x[src]
-        dist = torch.norm(rel_x, p=2, dim=-1, keepdim=True)
+        dist = torch.norm(rel_x + 1e-8, p=2, dim=-1, keepdim=True)
 
         h_in = h
         for i in range(self.num_x2h):
