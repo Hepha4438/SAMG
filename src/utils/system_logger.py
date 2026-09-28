@@ -34,7 +34,7 @@ class SAMGLogger:
                 header = (["Epoch"]
                           + [f"logscale_mean_{d}" for d in dim_names]
                           + [f"pinfrac_{d}" for d in dim_names]
-                          + ["nll_median", "nll_p99"])
+                          + ["nll_median", "nll_p99", "lr"])
                 writer.writerow(header)
 
     def log_losses(self, epoch, loss_dict):
@@ -59,7 +59,7 @@ class SAMGLogger:
             row = [epoch]
             row += [stats.get(f"logscale_mean_{d}", "") for d in dim_names]
             row += [stats.get(f"pinfrac_{d}", "") for d in dim_names]
-            row += [stats.get("nll_median", ""), stats.get("nll_p99", "")]
+            row += [stats.get("nll_median", ""), stats.get("nll_p99", ""), stats.get("lr", "")]
             writer.writerow(row)
 
     def log_hardware(self, epoch, cpu_time, compute_time):
@@ -131,6 +131,7 @@ class SAMGLoggingCallback(pl.Callback):
 
         # P1-1: instrumentation log_scale/pinfrac/NLL của AutoregressiveFlowLayer
         geometric_head = pl_module.generator.geometric_head
-        scale_stats = geometric_head.scale_stats()
+        scale_stats = geometric_head.scale_stats() or {}
+        scale_stats["lr"] = trainer.optimizers[0].param_groups[0]["lr"]
         self.sys_logger.log_flow_scale_stats(epoch, scale_stats)
         geometric_head.reset_scale_stats()
