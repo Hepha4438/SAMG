@@ -270,9 +270,10 @@ class SAMGLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, loss_dict = self.forward(batch)
 
-        safe_log_dict = {k: v.item() for k, v in loss_dict.items()}
-        
-        self.log_dict(safe_log_dict, batch_size=batch.num_graphs, sync_dist=True)
+        log_dict = {k: v.detach() for k, v in loss_dict.items()}
+
+        self.log_dict(log_dict, batch_size=batch.num_graphs, sync_dist=True,
+                       on_step=False, on_epoch=True, prog_bar=False)
         return loss
 
     def validation_step(self, batch, batch_idx):

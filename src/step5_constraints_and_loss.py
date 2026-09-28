@@ -84,7 +84,8 @@ class GlobalLoss(nn.Module):
             "loss_token": loss_token,
             "loss_geo": loss_geo,
             "loss_pocket": loss_pocket,
-            "loss_int": loss_int
+            "loss_int": loss_int,
+            "loss_geo_unclamped": loss_geo_unclamped
         }
         
         return total_loss, loss_dict

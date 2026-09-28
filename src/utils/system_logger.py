@@ -18,7 +18,7 @@ class SAMGLogger:
         if not os.path.exists(self.loss_file):
             with open(self.loss_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(["Epoch", "Total_Loss", "Token_Loss", "Geo_Loss", "Pocket_Loss", "Int_Loss"])
+                writer.writerow(["Epoch", "Total_Loss", "Token_Loss", "Geo_Loss", "Pocket_Loss", "Int_Loss", "Geo_Loss_Unclamped"])
         
         if not os.path.exists(self.hw_file):
             with open(self.hw_file, 'w', newline='', encoding='utf-8') as f:
@@ -33,8 +33,9 @@ class SAMGLogger:
                 f"{loss_dict.get('loss_total', 0):.4f}", 
                 f"{loss_dict.get('loss_token', 0):.4f}", 
                 f"{loss_dict.get('loss_geo', 0):.4f}", 
-                f"{loss_dict.get('loss_pocket', 0):.4f}", 
-                f"{loss_dict.get('loss_int', 0):.4f}"
+                f"{loss_dict.get('loss_pocket', 0):.4f}",
+                f"{loss_dict.get('loss_int', 0):.4f}",
+                f"{loss_dict.get('loss_geo_unclamped', 0):.4f}"
             ])
 
     def log_hardware(self, epoch, cpu_time, compute_time):
@@ -87,13 +88,17 @@ class SAMGLoggingCallback(pl.Callback):
         epoch = trainer.current_epoch
         metrics = trainer.callback_metrics
         
-        # Bắt các metric đã được .item() từ training_step
+        # Các metric là tensor (epoch-mean do Lightning tự reduce), gọi .item() tại đây
+        def _to_scalar(v):
+            return v.item() if hasattr(v, 'item') else v
+
         loss_dict = {
-            'loss_total': metrics.get('loss_total', 0),
-            'loss_token': metrics.get('loss_token', 0),
-            'loss_geo': metrics.get('loss_geo', 0),
-            'loss_pocket': metrics.get('loss_pocket', 0),
-            'loss_int': metrics.get('loss_int', 0)
+            'loss_total': _to_scalar(metrics.get('loss_total', 0)),
+            'loss_token': _to_scalar(metrics.get('loss_token', 0)),
+            'loss_geo': _to_scalar(metrics.get('loss_geo', 0)),
+            'loss_pocket': _to_scalar(metrics.get('loss_pocket', 0)),
+            'loss_int': _to_scalar(metrics.get('loss_int', 0)),
+            'loss_geo_unclamped': _to_scalar(metrics.get('loss_geo_unclamped', 0))
         }
         
         # Ghi ra ổ cứng (Chỉ ghi 1 lần duy nhất mỗi epoch)
