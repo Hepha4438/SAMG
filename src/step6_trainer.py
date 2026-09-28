@@ -308,7 +308,9 @@ if __name__ == "__main__":
             "num_node_types": 8
         },
         "loss_weights": {
-            "token": 1.0, "geo": 1.0, "pocket": 1.0, "int": 0.5, "d_threshold": 2.5
+            # "int": 0.0 vì L_Int hiện dùng ligand_pos ground-truth -> gradient
+            # = 0. Bật lại khi nối 3D Assembler vào training.
+            "token": 1.0, "geo": 1.0, "pocket": 1.0, "int": 0.0, "d_threshold": 2.5
         }
     })
 
