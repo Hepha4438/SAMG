@@ -145,28 +145,19 @@ class SAMGDataPreprocessor:
         return R_mat, t, stable, diag
 
     def _load_pocket_geometry(self, pocket_path):
-        """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, ref_vec) voi
-        ref_vec = centroid(N khung) - centroid(O khung), da chuan hoa; None neu khong tinh duoc."""
+        """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, atom_names) cho _get_pocket_frame."""
         structure = self.parser.get_structure("pocket", pocket_path)
-        coords, n_coords, o_coords = [], [], []
+        coords, names = [], []
         for residue in structure.get_residues():
             if residue.get_resname() == "HOH":
                 continue
             for atom in residue:
                 coords.append(atom.get_coord())
-                if atom.get_name() == "N":
-                    n_coords.append(atom.get_coord())
-                elif atom.get_name() == "O":
-                    o_coords.append(atom.get_coord())
+                names.append(atom.get_name())
 
         pocket_coords = np.array(coords, dtype=np.float64) if coords else np.zeros((0, 3))
-        if n_coords and o_coords:
-            ref_vec = np.mean(n_coords, axis=0) - np.mean(o_coords, axis=0)
-            norm = np.linalg.norm(ref_vec)
-            ref_vec = ref_vec / norm if norm > 1e-8 else None
-        else:
-            ref_vec = None
-        return pocket_coords, ref_vec
+        atom_names = np.array(names) if names else np.array([], dtype=object)
+        return pocket_coords, atom_names
 
     def _get_spherical_coords(self, vector):
         d = np.linalg.norm(vector)
@@ -177,10 +168,10 @@ class SAMGDataPreprocessor:
 
     def fragment_ligand_frag2seq(self, ligand_path, apo_pocket_path):
         """
-        Tra ve dict {"frame_stable": bool, "n_jitter_fail": int, "sequence": [...]}.
+        Tra ve dict {"frame_stable": bool, "frame_diag": dict, "sequence": [...]}.
         LUU Y: dinh dang pkl da doi tu Rev 4 (P1c) -- truoc day ham nay tra ve TRUC TIEP
         list "sequence"; gio bao thanh dict de mang theo do on dinh cua frame hoc (frame_stable,
-        n_jitter_fail tu `_get_pocket_frame`) o cap FILE, khong phai cap token.
+        frame_diag tu `_get_pocket_frame`) o cap FILE, khong phai cap token.
         """
         supplier = Chem.SDMolSupplier(ligand_path)
         if len(supplier) == 0: return None
@@ -210,13 +201,8 @@ class SAMGDataPreprocessor:
 
         frag_data.sort(key=lambda x: x["smiles"])
 
-        pocket_coords, ref_vec = self._load_pocket_geometry(apo_pocket_path)
-        if ref_vec is not None and len(pocket_coords) >= 3:
-            R_m_to_w, t_m_to_w, frame_stable, n_jitter_fail = self._get_pocket_frame(pocket_coords, ref_vec=ref_vec)
-        else:
-            R_m_to_w = np.eye(3)
-            t_m_to_w = pocket_coords.mean(0) if len(pocket_coords) else np.zeros(3)
-            frame_stable, n_jitter_fail = False, 0
+        pocket_coords, atom_names = self._load_pocket_geometry(apo_pocket_path)
+        R_m_to_w, t_m_to_w, frame_stable, frame_diag = self._get_pocket_frame(pocket_coords, atom_names)
 
         sequence = []
         for f in frag_data:
@@ -226,7 +212,7 @@ class SAMGDataPreprocessor:
             R_g_to_m = np.dot(R_m_to_w.T, R_g_to_w)
             qx, qy, qz, qw = R.from_matrix(R_g_to_m).as_quat()
             sequence.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)], "frag_frame_stable": f["frag_frame_stable"]})
-        return {"frame_stable": frame_stable, "n_jitter_fail": n_jitter_fail, "sequence": sequence}
+        return {"frame_stable": frame_stable, "frame_diag": frame_diag, "sequence": sequence}
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
         holo_pocket_rel, apo_pocket_rel, ligand_rel, _, _, _, _ = entry
@@ -252,6 +238,8 @@ class SAMGDataPreprocessor:
         if sequence_7d:
             with open(os.path.join(self.out_dir, f"{pli_id}_sequence_7d.pkl"), 'wb') as f:
                 pickle.dump(sequence_7d, f)
+            return sequence_7d["frame_stable"], sequence_7d["frame_diag"]
+        return None, None
 
     def build_global_vocab(self):
         print("\n[*] Building Global Vocabulary from all processed 7D sequences...")
@@ -261,7 +249,7 @@ class SAMGDataPreprocessor:
             
         for file_path in tqdm(sequence_files, desc="Building Vocab", unit="file"):
             with open(file_path, "rb") as f:
-                # Dinh dang pkl da doi (P1c): dict {"frame_stable", "n_jitter_fail", "sequence"}
+                # Dinh dang pkl da doi (P1c): dict {"frame_stable", "frame_diag", "sequence"}
                 for item in pickle.load(f)["sequence"]:
                     if item["smiles"] not in vocab: vocab[item["smiles"]] = len(vocab)
                         
@@ -288,20 +276,37 @@ if __name__ == "__main__":
     def worker_process(entry):
         try:
             if "HSP90_System" in processor.system_config:
-                processor.process_system("HSP90_System", "easy", entry, verbose=False)
+                return processor.process_system("HSP90_System", "easy", entry, verbose=False)
             elif "JNK_System" in processor.system_config:
-                processor.process_system("JNK_System", "hard", entry, verbose=False)
+                return processor.process_system("JNK_System", "hard", entry, verbose=False)
             else:
-                processor.process_system("HSP90_System", "easy", entry, verbose=False)
-        except Exception: pass
+                return processor.process_system("HSP90_System", "easy", entry, verbose=False)
+        except Exception:
+            return None, None
 
+    all_frame_results = []
     for split_name, subset in splits.items():
         print(f"\n[*] ===========================================")
         print(f"[*] TIỀN XỬ LÝ TẬP DỮ LIỆU: {split_name.upper()}")
         print(f"[*] Tìm thấy {len(subset)} mẫu trong tập này.")
         print(f"[*] ===========================================")
-        
+
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            list(tqdm(executor.map(worker_process, subset), total=len(subset), desc=f"Processing {split_name}"))
-            
+            results = list(tqdm(executor.map(worker_process, subset), total=len(subset), desc=f"Processing {split_name}"))
+        all_frame_results.extend(results)
+
     processor.build_global_vocab()
+
+    # P1c: ty le complex co frame_stable=False, tach theo nguyen nhan (n1<tau / n2<tau / thieu nhom nguyen tu)
+    valid_results = [(fs, diag) for fs, diag in all_frame_results if fs is not None]
+    n_total = len(valid_results)
+    if n_total > 0:
+        tau = 0.30
+        n_unstable = sum(1 for fs, _ in valid_results if not fs)
+        n_n1 = sum(1 for fs, diag in valid_results if not fs and diag["n1"] is not None and diag["n1"] < tau)
+        n_n2 = sum(1 for fs, diag in valid_results if not fs and diag["n2"] is not None and diag["n2"] < tau)
+        n_missing = sum(1 for fs, diag in valid_results if not fs and diag["missing"])
+        print(f"\n[*] frame_stable=False: {n_unstable}/{n_total} ({n_unstable / n_total * 100:.2f}%)")
+        print(f"    n1 < tau             : {n_n1}")
+        print(f"    n2 < tau             : {n_n2}")
+        print(f"    thieu nhom nguyen tu : {n_missing}")
