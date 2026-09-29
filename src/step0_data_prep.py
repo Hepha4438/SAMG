@@ -81,24 +81,17 @@ class SAMGDataPreprocessor:
                     return np.column_stack((x_axis, y_axis, z_axis)), p1
         return np.eye(3), points[0]
 
-    def _get_pocket_frame(self, pocket_coords, m3_thresh=0.05,
-                          ref_vec=None, gap_thresh=0.9):
-        """Tra ve (R, t, stable). R: cot la 3 truc canonical, t: tam hoc."""
-        pocket_coords = np.asarray(pocket_coords, dtype=np.float64)
+    def _compute_pocket_axes(self, pocket_coords, m3_thresh, ref_thresh, ref_vec):
+        """Mot lan tinh frame (khong jitter): tra ve (R, t, decisive)."""
         t = pocket_coords.mean(0)
         C = pocket_coords - t
 
         cov = (C.T @ C) / len(C)
         eigvals, eigvecs = np.linalg.eigh(cov)
         order = np.argsort(eigvals)[::-1]
-        eigvals = eigvals[order]
         eigvecs = eigvecs[:, order]
 
-        if ref_vec is not None:
-            ref_norm = np.linalg.norm(ref_vec)
-            ref_vec = ref_vec / ref_norm if ref_norm > 1e-8 else None
-
-        used_tier2 = False
+        decisive = True
         axes = []
         for k in range(3):
             v_k = eigvecs[:, k]
@@ -106,24 +99,58 @@ class SAMGDataPreprocessor:
             std = proj.std()
             m3 = (proj ** 3).sum()
             m3n = m3 / (len(C) * (std ** 3) + 1e-12)
+            ref_ok = ref_vec is not None and abs(np.dot(v_k, ref_vec)) >= ref_thresh
             if abs(m3n) >= m3_thresh:
                 if m3n < 0:
                     v_k = -v_k
-            else:
-                used_tier2 = True
-                if ref_vec is not None and np.dot(v_k, ref_vec) < 0:
+            elif ref_ok:
+                if np.dot(v_k, ref_vec) < 0:
                     v_k = -v_k
+            else:
+                decisive = False
             axes.append(v_k)
 
         v1, v2 = axes[0], axes[1]
         v3 = np.cross(v1, v2)
         R_mat = np.column_stack((v1, v2, v3))
+        return R_mat, t, decisive
 
-        l1, l2, l3 = eigvals[0], eigvals[1], eigvals[2]
-        gap_ok = (l2 / (l1 + 1e-12)) < gap_thresh and (l3 / (l2 + 1e-12)) < gap_thresh
-        stable = (not used_tier2) and gap_ok
+    def _get_pocket_frame(self, pocket_coords, m3_thresh=0.05, ref_thresh=0.05,
+                          ref_vec=None, n_jitter=5, jitter_sigma=0.3, jitter_max_deg=5.0):
+        """
+        Tra ve (R, t, frame_stable, n_jitter_fail). R: cot la 3 truc canonical, t: tam hoc.
 
-        return R_mat, t, stable
+        frame_stable -- DINH NGHIA REV 2 (plan.md, PHASE 1 / P1b):
+          a) dau dut khoat: voi TUNG truc, |m3n| >= m3_thresh HOAC |v_k . ref| >= ref_thresh.
+             Neu mot truc khong dat ca hai dieu kien nay thi khong on dinh.
+          b) phep thu jitter: n_jitter lan cong nhieu Gaussian sigma=jitter_sigma A vao
+             pocket_coords, tinh lai frame voi cung quy uoc dau; goc lech toi da giua frame
+             goc va cac frame nhieu phai < jitter_max_deg.
+          frame_stable = a) AND b). "Dung tang 2" (fallback bang ref_vec hoa hoc) KHONG con
+          la ly do de coi la bat on dinh -- day la fallback tat dinh, bat bien SE(3); jitter
+          da bao phu truc tiep tinh lien tuc cua frame nen KHONG con dieu kien khe tri rieng.
+        """
+        pocket_coords = np.asarray(pocket_coords, dtype=np.float64)
+
+        if ref_vec is not None:
+            ref_norm = np.linalg.norm(ref_vec)
+            ref_vec = ref_vec / ref_norm if ref_norm > 1e-8 else None
+
+        R_mat, t, decisive = self._compute_pocket_axes(pocket_coords, m3_thresh, ref_thresh, ref_vec)
+
+        seed = int(pocket_coords.shape[0])
+        rng = np.random.RandomState(seed)
+        n_jitter_fail = 0
+        for _ in range(n_jitter):
+            noisy_coords = pocket_coords + rng.normal(scale=jitter_sigma, size=pocket_coords.shape)
+            R_noisy, _, _ = self._compute_pocket_axes(noisy_coords, m3_thresh, ref_thresh, ref_vec)
+            dev = float(np.degrees(np.arccos(np.clip((np.trace(R_mat.T @ R_noisy) - 1) / 2, -1.0, 1.0))))
+            if dev >= jitter_max_deg:
+                n_jitter_fail += 1
+
+        frame_stable = decisive and (n_jitter_fail == 0)
+
+        return R_mat, t, frame_stable, n_jitter_fail
 
     def _get_spherical_coords(self, vector):
         d = np.linalg.norm(vector)
