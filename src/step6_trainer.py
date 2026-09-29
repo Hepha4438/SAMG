@@ -77,11 +77,11 @@ class SAMGOptimizedDataset(Dataset):
                 continue
             self.valid_indices.append(i)
 
-        assert len(self.valid_indices) > 0, f"split {split_mode}: 0 mẫu hợp lệ"
         print(f"[*] [{split_mode}] tổng entry: {len(self.target_entries)}  "
               f"có pkl: {n_has_pkl}  bị loại bởi frame_stable: {n_excluded_unstable}  "
               f"bị loại bởi frag_frame_stable: {n_excluded_frag_unstable}  "
               f"valid: {len(self.valid_indices)}")
+        assert len(self.valid_indices) > 0, f"split {split_mode}: 0 mẫu hợp lệ"
 
     def __len__(self):
         return len(self.valid_indices)
