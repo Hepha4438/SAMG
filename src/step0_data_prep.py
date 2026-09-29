@@ -152,6 +152,30 @@ class SAMGDataPreprocessor:
 
         return R_mat, t, frame_stable, n_jitter_fail
 
+    def _load_pocket_geometry(self, pocket_path):
+        """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, ref_vec) voi
+        ref_vec = centroid(N khung) - centroid(O khung), da chuan hoa; None neu khong tinh duoc."""
+        structure = self.parser.get_structure("pocket", pocket_path)
+        coords, n_coords, o_coords = [], [], []
+        for residue in structure.get_residues():
+            if residue.get_resname() == "HOH":
+                continue
+            for atom in residue:
+                coords.append(atom.get_coord())
+                if atom.get_name() == "N":
+                    n_coords.append(atom.get_coord())
+                elif atom.get_name() == "O":
+                    o_coords.append(atom.get_coord())
+
+        pocket_coords = np.array(coords, dtype=np.float64) if coords else np.zeros((0, 3))
+        if n_coords and o_coords:
+            ref_vec = np.mean(n_coords, axis=0) - np.mean(o_coords, axis=0)
+            norm = np.linalg.norm(ref_vec)
+            ref_vec = ref_vec / norm if norm > 1e-8 else None
+        else:
+            ref_vec = None
+        return pocket_coords, ref_vec
+
     def _get_spherical_coords(self, vector):
         d = np.linalg.norm(vector)
         if d < 1e-6: return 0.0, 0.0, 0.0
@@ -159,7 +183,13 @@ class SAMGDataPreprocessor:
         phi = np.arctan2(vector[1], vector[0])
         return float(d), float(theta), float(phi)
 
-    def fragment_ligand_frag2seq(self, ligand_path):
+    def fragment_ligand_frag2seq(self, ligand_path, apo_pocket_path):
+        """
+        Tra ve dict {"frame_stable": bool, "n_jitter_fail": int, "sequence": [...]}.
+        LUU Y: dinh dang pkl da doi tu Rev 4 (P1c) -- truoc day ham nay tra ve TRUC TIEP
+        list "sequence"; gio bao thanh dict de mang theo do on dinh cua frame hoc (frame_stable,
+        n_jitter_fail tu `_get_pocket_frame`) o cap FILE, khong phai cap token.
+        """
         supplier = Chem.SDMolSupplier(ligand_path)
         if len(supplier) == 0: return None
         mol = supplier[0]
@@ -187,18 +217,24 @@ class SAMGDataPreprocessor:
             frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon, "center": np.mean(coords, axis=0), "frag_frame_stable": frag_frame_stable})
 
         frag_data.sort(key=lambda x: x["smiles"])
-        centers = np.array([f["center"] for f in frag_data])
-        R_m_to_w, t_m_to_w = self._get_local_frame(centers)
 
-        sequence_7d = []
+        pocket_coords, ref_vec = self._load_pocket_geometry(apo_pocket_path)
+        if ref_vec is not None and len(pocket_coords) >= 3:
+            R_m_to_w, t_m_to_w, frame_stable, n_jitter_fail = self._get_pocket_frame(pocket_coords, ref_vec=ref_vec)
+        else:
+            R_m_to_w = np.eye(3)
+            t_m_to_w = pocket_coords.mean(0) if len(pocket_coords) else np.zeros(3)
+            frame_stable, n_jitter_fail = False, 0
+
+        sequence = []
         for f in frag_data:
             rel_center = np.dot(R_m_to_w.T, (f["center"] - t_m_to_w))
             d, theta, phi = self._get_spherical_coords(rel_center)
             R_g_to_w, t_g_to_w = self._get_local_frame(f["coords_canon"])
             R_g_to_m = np.dot(R_m_to_w.T, R_g_to_w)
             qx, qy, qz, qw = R.from_matrix(R_g_to_m).as_quat()
-            sequence_7d.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)], "frag_frame_stable": f["frag_frame_stable"]})
-        return sequence_7d
+            sequence.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)], "frag_frame_stable": f["frag_frame_stable"]})
+        return {"frame_stable": frame_stable, "n_jitter_fail": n_jitter_fail, "sequence": sequence}
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
         holo_pocket_rel, apo_pocket_rel, ligand_rel, _, _, _, _ = entry
@@ -220,7 +256,7 @@ class SAMGDataPreprocessor:
         if anti_target_paths:
             self.align_anti_targets(apo_h_path, anti_target_paths, out_prefix=pli_id)
         
-        sequence_7d = self.fragment_ligand_frag2seq(ligand_path)
+        sequence_7d = self.fragment_ligand_frag2seq(ligand_path, target_apo_path)
         if sequence_7d:
             with open(os.path.join(self.out_dir, f"{pli_id}_sequence_7d.pkl"), 'wb') as f:
                 pickle.dump(sequence_7d, f)
@@ -233,7 +269,8 @@ class SAMGDataPreprocessor:
             
         for file_path in tqdm(sequence_files, desc="Building Vocab", unit="file"):
             with open(file_path, "rb") as f:
-                for item in pickle.load(f):
+                # Dinh dang pkl da doi (P1c): dict {"frame_stable", "n_jitter_fail", "sequence"}
+                for item in pickle.load(f)["sequence"]:
                     if item["smiles"] not in vocab: vocab[item["smiles"]] = len(vocab)
                         
         with open(os.path.join(self.out_dir, "global_vocab.pkl"), "wb") as f: pickle.dump(vocab, f)
