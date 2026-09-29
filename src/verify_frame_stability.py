@@ -1,9 +1,10 @@
 """
-verify_frame_stability.py -- KIEM QUY UOC DAU FRAME HOC (READ-ONLY, KHONG SUA GI)
+verify_frame_stability.py -- KIEM FRAME HOC GRAM-SCHMIDT (READ-ONLY, KHONG SUA GI)
 
-Muc dich: kiem `_get_pocket_frame` (step0_data_prep.py, P1b) TRUOC khi tai sinh du lieu.
-Voi cac cap pli_id cung PDB id, frame hoc tinh o hai ben phai khop nhau sau khi ap
-phep quay Kabsch giua hai pocket -- neu quy uoc dau on dinh thi goc lech phai nho.
+Muc dich: kiem `_get_pocket_frame` (step0_data_prep.py, P1b BAN CUOI -- Gram-Schmidt tu
+N->O va sidechain->backbone) TRUOC khi tai sinh du lieu. Voi cac cap pli_id cung PDB id,
+frame hoc tinh o hai ben phai khop nhau sau khi ap phep quay Kabsch giua hai pocket --
+neu frame tat dinh va lien tuc thi goc lech phai nho.
 
 Cach chay:
     python src/verify_frame_stability.py
@@ -46,28 +47,20 @@ def find_pairs():
 
 
 def load_pocket_atoms(pli_id):
-    """Tra ve (atom_map {(resseq, icode, atom_name): coord}, N_coords, O_coords), bo HOH."""
+    """Tra ve atom_map {(resseq, icode, atom_name): coord}, bo HOH."""
     pdb_path = os.path.join(DATA_FOLDER, pli_id, "receptor_apo_pocket10.pdb")
     if not os.path.exists(pdb_path):
-        return None, None, None
+        return None
 
     structure = _parser.get_structure(pli_id, pdb_path)
     atom_map = {}
-    n_coords, o_coords = [], []
     for residue in structure.get_residues():
         if residue.get_resname() == "HOH":
             continue
         _, resseq, icode = residue.id
         for atom in residue:
             atom_map[(resseq, icode, atom.get_name())] = atom.get_coord()
-            if atom.get_name() == "N":
-                n_coords.append(atom.get_coord())
-            elif atom.get_name() == "O":
-                o_coords.append(atom.get_coord())
-
-    n_coords = np.array(n_coords) if n_coords else np.zeros((0, 3))
-    o_coords = np.array(o_coords) if o_coords else np.zeros((0, 3))
-    return atom_map, n_coords, o_coords
+    return atom_map
 
 
 def kabsch(P, Q):
@@ -82,14 +75,6 @@ def kabsch(P, Q):
 def angle_deg(M):
     tr = np.trace(M)
     return float(np.degrees(np.arccos(np.clip((tr - 1) / 2, -1.0, 1.0))))
-
-
-def ref_vector(n_coords, o_coords):
-    if len(n_coords) == 0 or len(o_coords) == 0:
-        return None
-    v = n_coords.mean(0) - o_coords.mean(0)
-    norm = np.linalg.norm(v)
-    return v / norm if norm > 1e-8 else None
 
 
 def summarize(name, arr):
@@ -108,16 +93,18 @@ def main():
     pairs = find_pairs()
     print(f"[*] So cap ung vien cung PDB id: {len(pairs)}")
 
+    tau = 0.30
     rmsds = []
     devs_all = []
     devs_stable = []
     n_excluded_unstable = 0
-    n_excluded_indecisive = 0
-    n_excluded_jitter = 0
+    n_excluded_n1 = 0
+    n_excluded_n2 = 0
+    n_excluded_missing = 0
 
     for pid_a, pid_b in pairs:
-        atoms_a, n_a, o_a = load_pocket_atoms(pid_a)
-        atoms_b, n_b, o_b = load_pocket_atoms(pid_b)
+        atoms_a = load_pocket_atoms(pid_a)
+        atoms_b = load_pocket_atoms(pid_b)
         if not atoms_a or not atoms_b:
             continue
 
@@ -127,6 +114,7 @@ def main():
 
         P = np.array([atoms_a[k] for k in common_keys], dtype=np.float64)
         Q = np.array([atoms_b[k] for k in common_keys], dtype=np.float64)
+        atom_names = np.array([k[2] for k in common_keys])
 
         Pc, Qc = P - P.mean(0), Q - Q.mean(0)
         R_ab = kabsch(Pc, Qc)
@@ -135,14 +123,8 @@ def main():
             continue
         rmsds.append(rmsd)
 
-        ref_a, ref_b = ref_vector(n_a, o_a), ref_vector(n_b, o_b)
-
-        Fa, _, stable_a, njf_a = preproc._get_pocket_frame(P, ref_vec=ref_a)
-        Fb, _, stable_b, njf_b = preproc._get_pocket_frame(Q, ref_vec=ref_b)
-        # Chi de tach nguyen nhan loai (dau khong dut khoat vs jitter fail), dung lai
-        # cung m3_thresh/ref_thresh mac dinh cua _get_pocket_frame.
-        _, _, decisive_a = preproc._compute_pocket_axes(P, 0.05, 0.05, ref_a)
-        _, _, decisive_b = preproc._compute_pocket_axes(Q, 0.05, 0.05, ref_b)
+        Fa, _, stable_a, diag_a = preproc._get_pocket_frame(P, atom_names, tau=tau)
+        Fb, _, stable_b, diag_b = preproc._get_pocket_frame(Q, atom_names, tau=tau)
 
         dev = angle_deg(Fb.T @ (R_ab @ Fa))
         devs_all.append(dev)
@@ -150,10 +132,12 @@ def main():
             devs_stable.append(dev)
         else:
             n_excluded_unstable += 1
-            if not (decisive_a and decisive_b):
-                n_excluded_indecisive += 1
-            if njf_a > 0 or njf_b > 0:
-                n_excluded_jitter += 1
+            if (diag_a["n1"] is not None and diag_a["n1"] < tau) or (diag_b["n1"] is not None and diag_b["n1"] < tau):
+                n_excluded_n1 += 1
+            if (diag_a["n2"] is not None and diag_a["n2"] < tau) or (diag_b["n2"] is not None and diag_b["n2"] < tau):
+                n_excluded_n2 += 1
+            if diag_a["missing"] or diag_b["missing"]:
+                n_excluded_missing += 1
 
     print(f"\n[*] n_cap (sau loc RMSD<=1.0A): {len(rmsds)}")
     if rmsds:
@@ -170,10 +154,9 @@ def main():
         n = len(devs_all)
         print(f"\n[*] Ty le cap bi loai boi stable=False: {n_excluded_unstable / n * 100:.2f}%  "
               f"({n_excluded_unstable}/{n})")
-        print(f"    trong do -- dau khong dut khoat: {n_excluded_indecisive / n * 100:.2f}%  "
-              f"({n_excluded_indecisive}/{n})")
-        print(f"    trong do -- jitter fail         : {n_excluded_jitter / n * 100:.2f}%  "
-              f"({n_excluded_jitter}/{n})")
+        print(f"    trong do -- n1 < tau              : {n_excluded_n1 / n * 100:.2f}%  ({n_excluded_n1}/{n})")
+        print(f"    trong do -- n2 < tau              : {n_excluded_n2 / n * 100:.2f}%  ({n_excluded_n2}/{n})")
+        print(f"    trong do -- thieu nhom nguyen tu  : {n_excluded_missing / n * 100:.2f}%  ({n_excluded_missing}/{n})")
 
 
 if __name__ == "__main__":
