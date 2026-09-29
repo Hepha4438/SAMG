@@ -81,6 +81,50 @@ class SAMGDataPreprocessor:
                     return np.column_stack((x_axis, y_axis, z_axis)), p1
         return np.eye(3), points[0]
 
+    def _get_pocket_frame(self, pocket_coords, m3_thresh=0.05,
+                          ref_vec=None, gap_thresh=0.9):
+        """Tra ve (R, t, stable). R: cot la 3 truc canonical, t: tam hoc."""
+        pocket_coords = np.asarray(pocket_coords, dtype=np.float64)
+        t = pocket_coords.mean(0)
+        C = pocket_coords - t
+
+        cov = (C.T @ C) / len(C)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        order = np.argsort(eigvals)[::-1]
+        eigvals = eigvals[order]
+        eigvecs = eigvecs[:, order]
+
+        if ref_vec is not None:
+            ref_norm = np.linalg.norm(ref_vec)
+            ref_vec = ref_vec / ref_norm if ref_norm > 1e-8 else None
+
+        used_tier2 = False
+        axes = []
+        for k in range(3):
+            v_k = eigvecs[:, k]
+            proj = C @ v_k
+            std = proj.std()
+            m3 = (proj ** 3).sum()
+            m3n = m3 / (len(C) * (std ** 3) + 1e-12)
+            if abs(m3n) >= m3_thresh:
+                if m3n < 0:
+                    v_k = -v_k
+            else:
+                used_tier2 = True
+                if ref_vec is not None and np.dot(v_k, ref_vec) < 0:
+                    v_k = -v_k
+            axes.append(v_k)
+
+        v1, v2 = axes[0], axes[1]
+        v3 = np.cross(v1, v2)
+        R_mat = np.column_stack((v1, v2, v3))
+
+        l1, l2, l3 = eigvals[0], eigvals[1], eigvals[2]
+        gap_ok = (l2 / (l1 + 1e-12)) < gap_thresh and (l3 / (l2 + 1e-12)) < gap_thresh
+        stable = (not used_tier2) and gap_ok
+
+        return R_mat, t, stable
+
     def _get_spherical_coords(self, vector):
         d = np.linalg.norm(vector)
         if d < 1e-6: return 0.0, 0.0, 0.0
