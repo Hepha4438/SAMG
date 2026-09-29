@@ -207,14 +207,17 @@ class SAMGDataPreprocessor:
             canonical_smiles = Chem.MolToSmiles(frag, isomericSmiles=True, canonical=True)
             conf = frag.GetConformer()
             coords = np.array([conf.GetAtomPosition(i) for i in range(frag.GetNumAtoms())])
-            try:
-                ranks = list(Chem.CanonicalRankAtoms(frag, breakTies=True))
-                order = np.argsort(ranks)
-                coords_canon = coords[order]
-                frag_frame_stable = True
-            except Exception:
-                coords_canon = coords
-                frag_frame_stable = False
+            g = Chem.Mol(frag)
+            with silence_stderr():
+                try:
+                    g.UpdatePropertyCache(strict=False)
+                    Chem.FastFindRings(g)
+                    ranks = list(Chem.CanonicalRankAtoms(g, breakTies=True))
+                    coords_canon = coords[np.argsort(ranks)]
+                    frag_frame_stable = True
+                except Exception:
+                    coords_canon = coords
+                    frag_frame_stable = False
             frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon, "center": np.mean(coords, axis=0), "frag_frame_stable": frag_frame_stable})
 
         frag_data.sort(key=lambda x: x["smiles"])
@@ -256,8 +259,9 @@ class SAMGDataPreprocessor:
         if sequence_7d:
             with open(os.path.join(self.out_dir, f"{pli_id}_sequence_7d.pkl"), 'wb') as f:
                 pickle.dump(sequence_7d, f)
-            return sequence_7d["frame_stable"], sequence_7d["frame_diag"]
-        return None, None
+            frag_flags = [item["frag_frame_stable"] for item in sequence_7d["sequence"]]
+            return sequence_7d["frame_stable"], sequence_7d["frame_diag"], frag_flags
+        return None, None, None
 
     def build_global_vocab(self):
         print("\n[*] Building Global Vocabulary from all processed 7D sequences...")
@@ -300,7 +304,7 @@ if __name__ == "__main__":
             else:
                 return processor.process_system("HSP90_System", "easy", entry, verbose=False)
         except Exception:
-            return None, None
+            return None, None, None
 
     all_frame_results = []
     for split_name, subset in splits.items():
@@ -316,15 +320,26 @@ if __name__ == "__main__":
     processor.build_global_vocab()
 
     # P1c: ty le complex co frame_stable=False, tach theo nguyen nhan (n1<tau / n2<tau / thieu nhom nguyen tu)
-    valid_results = [(fs, diag) for fs, diag in all_frame_results if fs is not None]
+    valid_results = [(fs, diag, frags) for fs, diag, frags in all_frame_results if fs is not None]
     n_total = len(valid_results)
     if n_total > 0:
         tau = 0.30
-        n_unstable = sum(1 for fs, _ in valid_results if not fs)
-        n_n1 = sum(1 for fs, diag in valid_results if not fs and diag["n1"] is not None and diag["n1"] < tau)
-        n_n2 = sum(1 for fs, diag in valid_results if not fs and diag["n2"] is not None and diag["n2"] < tau)
-        n_missing = sum(1 for fs, diag in valid_results if not fs and diag["missing"])
+        n_unstable = sum(1 for fs, _, _ in valid_results if not fs)
+        n_n1 = sum(1 for fs, diag, _ in valid_results if not fs and diag["n1"] is not None and diag["n1"] < tau)
+        n_n2 = sum(1 for fs, diag, _ in valid_results if not fs and diag["n2"] is not None and diag["n2"] < tau)
+        n_missing = sum(1 for fs, diag, _ in valid_results if not fs and diag["missing"])
         print(f"\n[*] frame_stable=False: {n_unstable}/{n_total} ({n_unstable / n_total * 100:.2f}%)")
         print(f"    n1 < tau             : {n_n1}")
         print(f"    n2 < tau             : {n_n2}")
         print(f"    thieu nhom nguyen tu : {n_missing}")
+
+        # P1a: ty le fragment/complex co frag_frame_stable=False
+        all_frag_flags = [flag for _, _, frags in valid_results for flag in frags]
+        n_frag_total = len(all_frag_flags)
+        n_frag_unstable = sum(1 for flag in all_frag_flags if not flag)
+        n_complex_with_unstable_frag = sum(1 for _, _, frags in valid_results if any(not f for f in frags))
+        if n_frag_total > 0:
+            print(f"\n[*] frag_frame_stable=False: {n_frag_unstable}/{n_frag_total} fragment "
+                  f"({n_frag_unstable / n_frag_total * 100:.2f}%)")
+            print(f"    complex co it nhat 1 fragment nhu vay: {n_complex_with_unstable_frag}/{n_total} "
+                  f"({n_complex_with_unstable_frag / n_total * 100:.2f}%)")
