@@ -87,7 +87,9 @@ def angle_deg(M):
 def ref_vector(n_coords, o_coords):
     if len(n_coords) == 0 or len(o_coords) == 0:
         return None
-    return n_coords.mean(0) - o_coords.mean(0)
+    v = n_coords.mean(0) - o_coords.mean(0)
+    norm = np.linalg.norm(v)
+    return v / norm if norm > 1e-8 else None
 
 
 def summarize(name, arr):
@@ -110,6 +112,8 @@ def main():
     devs_all = []
     devs_stable = []
     n_excluded_unstable = 0
+    n_excluded_indecisive = 0
+    n_excluded_jitter = 0
 
     for pid_a, pid_b in pairs:
         atoms_a, n_a, o_a = load_pocket_atoms(pid_a)
@@ -131,8 +135,14 @@ def main():
             continue
         rmsds.append(rmsd)
 
-        Fa, _, stable_a = preproc._get_pocket_frame(P, ref_vec=ref_vector(n_a, o_a))
-        Fb, _, stable_b = preproc._get_pocket_frame(Q, ref_vec=ref_vector(n_b, o_b))
+        ref_a, ref_b = ref_vector(n_a, o_a), ref_vector(n_b, o_b)
+
+        Fa, _, stable_a, njf_a = preproc._get_pocket_frame(P, ref_vec=ref_a)
+        Fb, _, stable_b, njf_b = preproc._get_pocket_frame(Q, ref_vec=ref_b)
+        # Chi de tach nguyen nhan loai (dau khong dut khoat vs jitter fail), dung lai
+        # cung m3_thresh/ref_thresh mac dinh cua _get_pocket_frame.
+        _, _, decisive_a = preproc._compute_pocket_axes(P, 0.05, 0.05, ref_a)
+        _, _, decisive_b = preproc._compute_pocket_axes(Q, 0.05, 0.05, ref_b)
 
         dev = angle_deg(Fb.T @ (R_ab @ Fa))
         devs_all.append(dev)
@@ -140,6 +150,10 @@ def main():
             devs_stable.append(dev)
         else:
             n_excluded_unstable += 1
+            if not (decisive_a and decisive_b):
+                n_excluded_indecisive += 1
+            if njf_a > 0 or njf_b > 0:
+                n_excluded_jitter += 1
 
     print(f"\n[*] n_cap (sau loc RMSD<=1.0A): {len(rmsds)}")
     if rmsds:
@@ -153,8 +167,13 @@ def main():
     summarize("STABLE", devs_stable)
 
     if devs_all:
-        excl_rate = n_excluded_unstable / len(devs_all) * 100
-        print(f"\n[*] Ty le cap bi loai boi stable=False: {excl_rate:.2f}%  ({n_excluded_unstable}/{len(devs_all)})")
+        n = len(devs_all)
+        print(f"\n[*] Ty le cap bi loai boi stable=False: {n_excluded_unstable / n * 100:.2f}%  "
+              f"({n_excluded_unstable}/{n})")
+        print(f"    trong do -- dau khong dut khoat: {n_excluded_indecisive / n * 100:.2f}%  "
+              f"({n_excluded_indecisive}/{n})")
+        print(f"    trong do -- jitter fail         : {n_excluded_jitter / n * 100:.2f}%  "
+              f"({n_excluded_jitter}/{n})")
 
 
 if __name__ == "__main__":
