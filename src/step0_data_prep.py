@@ -105,20 +105,28 @@ class SAMGDataPreprocessor:
             canonical_smiles = Chem.MolToSmiles(frag, isomericSmiles=True, canonical=True)
             conf = frag.GetConformer()
             coords = np.array([conf.GetAtomPosition(i) for i in range(frag.GetNumAtoms())])
-            frag_data.append({"smiles": canonical_smiles, "coords": coords, "center": np.mean(coords, axis=0)})
-            
+            try:
+                ranks = list(Chem.CanonicalRankAtoms(frag, breakTies=True))
+                order = np.argsort(ranks)
+                coords_canon = coords[order]
+                frag_frame_stable = True
+            except Exception:
+                coords_canon = coords
+                frag_frame_stable = False
+            frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon, "center": np.mean(coords, axis=0), "frag_frame_stable": frag_frame_stable})
+
         frag_data.sort(key=lambda x: x["smiles"])
         centers = np.array([f["center"] for f in frag_data])
         R_m_to_w, t_m_to_w = self._get_local_frame(centers)
-        
+
         sequence_7d = []
         for f in frag_data:
             rel_center = np.dot(R_m_to_w.T, (f["center"] - t_m_to_w))
             d, theta, phi = self._get_spherical_coords(rel_center)
-            R_g_to_w, t_g_to_w = self._get_local_frame(f["coords"])
+            R_g_to_w, t_g_to_w = self._get_local_frame(f["coords_canon"])
             R_g_to_m = np.dot(R_m_to_w.T, R_g_to_w)
-            qx, qy, qz, qw = R.from_matrix(R_g_to_m).as_quat() 
-            sequence_7d.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)]})
+            qx, qy, qz, qw = R.from_matrix(R_g_to_m).as_quat()
+            sequence_7d.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)], "frag_frame_stable": f["frag_frame_stable"]})
         return sequence_7d
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
