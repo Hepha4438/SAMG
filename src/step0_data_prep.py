@@ -3,13 +3,31 @@ import glob
 import json
 import pickle
 import subprocess
+import contextlib
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from Bio.PDB import PDBParser, Superimposer, PDBIO
 from rdkit import Chem
+from rdkit import RDLogger
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
+
+RDLogger.DisableLog('rdApp.*')
+
+
+@contextlib.contextmanager
+def silence_stderr():
+    saved = os.dup(2)
+    dn = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(dn, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(dn)
+        os.close(saved)
+
 
 class SAMGDataPreprocessor:
     def __init__(self, dataset_dir, anti_target_dir, split_dict_path, config_path, out_dir):
