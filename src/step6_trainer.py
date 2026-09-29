@@ -59,6 +59,7 @@ class SAMGOptimizedDataset(Dataset):
 
         n_has_pkl = 0
         n_excluded_unstable = 0
+        n_excluded_frag_unstable = 0
         self.valid_indices = []
         for i, entry in enumerate(self.target_entries):
             pli_id = entry[2].split("/")[0]
@@ -71,11 +72,15 @@ class SAMGOptimizedDataset(Dataset):
             if not pkl_data.get("frame_stable", False):
                 n_excluded_unstable += 1
                 continue
+            if any(not item.get("frag_frame_stable", True) for item in pkl_data["sequence"]):
+                n_excluded_frag_unstable += 1
+                continue
             self.valid_indices.append(i)
 
         assert len(self.valid_indices) > 0, f"split {split_mode}: 0 mẫu hợp lệ"
         print(f"[*] [{split_mode}] tổng entry: {len(self.target_entries)}  "
               f"có pkl: {n_has_pkl}  bị loại bởi frame_stable: {n_excluded_unstable}  "
+              f"bị loại bởi frag_frame_stable: {n_excluded_frag_unstable}  "
               f"valid: {len(self.valid_indices)}")
 
     def __len__(self):
@@ -162,8 +167,6 @@ class SAMGOptimizedDataset(Dataset):
         input_ids_list = [self.vocab.get("[SOS]", 0)]
         target_7d_list = [[0.0] * 7]
         for item in sequence_7d:
-            if not item.get("frag_frame_stable", True):
-                continue
             smiles_val = item.get("smiles")
             input_ids_list.append(self.vocab.get(smiles_val, self.vocab.get("[UNK]", 1)))
             target_7d_list.append(item["spatial_tokens"])
