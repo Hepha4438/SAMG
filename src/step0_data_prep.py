@@ -81,76 +81,68 @@ class SAMGDataPreprocessor:
                     return np.column_stack((x_axis, y_axis, z_axis)), p1
         return np.eye(3), points[0]
 
-    def _compute_pocket_axes(self, pocket_coords, m3_thresh, ref_thresh, ref_vec):
-        """Mot lan tinh frame (khong jitter): tra ve (R, t, decisive)."""
-        t = pocket_coords.mean(0)
-        C = pocket_coords - t
+    def _get_pocket_frame(self, pocket_coords, atom_names, tau=0.30):
+        """Frame canonical cua hoc. Tra ve (R, t, stable, diag).
+        R: cot la 3 truc. t: tam hoc. Khong PCA, khong tri rieng, khong quy uoc dau.
 
-        cov = (C.T @ C) / len(C)
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        order = np.argsort(eigvals)[::-1]
-        eigvecs = eigvecs[:, order]
+        BAN CUOI (plan.md, PHASE 1 / P1b) -- bo hoan toan PCA + momen bac ba + tang 2 +
+        jitter cua cac ban sua truoc: co che hai tang tao ra mot diem gian doan o nguong,
+        khien cau truc gan nguong bi lat 180 deg giua hai lan chay. Gram-Schmidt tu hai
+        huong hoa hoc (N->O va sidechain->backbone) khong co nhanh re, nen tat dinh va
+        lien tuc theo toa do nguyen tu (tru dung mot cho ref1 || ref2, buoc 4 kiem truc tiep).
 
-        decisive = True
-        axes = []
-        for k in range(3):
-            v_k = eigvecs[:, k]
-            proj = C @ v_k
-            std = proj.std()
-            m3 = (proj ** 3).sum()
-            m3n = m3 / (len(C) * (std ** 3) + 1e-12)
-            ref_ok = ref_vec is not None and abs(np.dot(v_k, ref_vec)) >= ref_thresh
-            if abs(m3n) >= m3_thresh:
-                if m3n < 0:
-                    v_k = -v_k
-            elif ref_ok:
-                if np.dot(v_k, ref_vec) < 0:
-                    v_k = -v_k
-            else:
-                decisive = False
-            axes.append(v_k)
-
-        v1, v2 = axes[0], axes[1]
-        v3 = np.cross(v1, v2)
-        R_mat = np.column_stack((v1, v2, v3))
-        return R_mat, t, decisive
-
-    def _get_pocket_frame(self, pocket_coords, m3_thresh=0.05, ref_thresh=0.05,
-                          ref_vec=None, n_jitter=5, jitter_sigma=0.3, jitter_max_deg=5.0):
-        """
-        Tra ve (R, t, frame_stable, n_jitter_fail). R: cot la 3 truc canonical, t: tam hoc.
-
-        frame_stable -- DINH NGHIA REV 2 (plan.md, PHASE 1 / P1b):
-          a) dau dut khoat: voi TUNG truc, |m3n| >= m3_thresh HOAC |v_k . ref| >= ref_thresh.
-             Neu mot truc khong dat ca hai dieu kien nay thi khong on dinh.
-          b) phep thu jitter: n_jitter lan cong nhieu Gaussian sigma=jitter_sigma A vao
-             pocket_coords, tinh lai frame voi cung quy uoc dau; goc lech toi da giua frame
-             goc va cac frame nhieu phai < jitter_max_deg.
-          frame_stable = a) AND b). "Dung tang 2" (fallback bang ref_vec hoa hoc) KHONG con
-          la ly do de coi la bat on dinh -- day la fallback tat dinh, bat bien SE(3); jitter
-          da bao phu truc tiep tinh lien tuc cua frame nen KHONG con dieu kien khe tri rieng.
+        1. BB = {N, CA, C, O}; bb = nguyen tu co ten trong BB; sc = cac nguyen tu con lai.
+        2. ref1 = centroid(ten==N) - centroid(ten==O); n1 = |ref1|.
+           Neu thieu N hoac O, hoac n1 < tau => stable=False.
+        3. e1 = ref1 / n1.
+        4. ref2 = centroid(sc) - centroid(bb); ref2p = ref2 - (ref2.e1)e1; n2 = |ref2p|.
+           Neu thieu sc/bb, hoac n2 < tau (hai huong gan song song) => stable=False.
+        5. e2 = ref2p / n2; e3 = cross(e1, e2); R = stack([e1, e2, e3], axis=1).
+        6. t = pocket_coords.mean(0).
+        7. diag = {"n1", "n2", "missing"} de theo doi ty le loai theo nguyen nhan.
         """
         pocket_coords = np.asarray(pocket_coords, dtype=np.float64)
+        atom_names = np.asarray(atom_names)
+        t = pocket_coords.mean(0)
 
-        if ref_vec is not None:
-            ref_norm = np.linalg.norm(ref_vec)
-            ref_vec = ref_vec / ref_norm if ref_norm > 1e-8 else None
+        BB = {"N", "CA", "C", "O"}
+        bb_mask = np.isin(atom_names, list(BB))
+        sc_mask = ~bb_mask
+        n_mask = atom_names == "N"
+        o_mask = atom_names == "O"
 
-        R_mat, t, decisive = self._compute_pocket_axes(pocket_coords, m3_thresh, ref_thresh, ref_vec)
+        stable = True
+        missing = []
+        n1 = n2 = None
 
-        seed = int(pocket_coords.shape[0])
-        rng = np.random.RandomState(seed)
-        n_jitter_fail = 0
-        for _ in range(n_jitter):
-            noisy_coords = pocket_coords + rng.normal(scale=jitter_sigma, size=pocket_coords.shape)
-            R_noisy, _, _ = self._compute_pocket_axes(noisy_coords, m3_thresh, ref_thresh, ref_vec)
-            dev = float(np.degrees(np.arccos(np.clip((np.trace(R_mat.T @ R_noisy) - 1) / 2, -1.0, 1.0))))
-            if dev >= jitter_max_deg:
-                n_jitter_fail += 1
+        if n_mask.any() and o_mask.any():
+            ref1 = pocket_coords[n_mask].mean(0) - pocket_coords[o_mask].mean(0)
+            n1 = float(np.linalg.norm(ref1))
+            if n1 < tau:
+                stable = False
+            e1 = ref1 / n1 if n1 > 1e-12 else np.array([1.0, 0.0, 0.0])
+        else:
+            missing.append("N/O")
+            stable = False
+            e1 = np.array([1.0, 0.0, 0.0])
 
-        frame_stable = decisive and (n_jitter_fail == 0)
+        if sc_mask.any() and bb_mask.any():
+            ref2 = pocket_coords[sc_mask].mean(0) - pocket_coords[bb_mask].mean(0)
+            ref2p = ref2 - np.dot(ref2, e1) * e1
+            n2 = float(np.linalg.norm(ref2p))
+            if n2 < tau:
+                stable = False
+            e2 = ref2p / n2 if n2 > 1e-12 else np.array([0.0, 1.0, 0.0])
+        else:
+            missing.append("sidechain/backbone")
+            stable = False
+            e2 = np.array([0.0, 1.0, 0.0])
 
-        return R_mat, t, frame_stable, n_jitter_fail
+        e3 = np.cross(e1, e2)
+        R_mat = np.column_stack((e1, e2, e3))
+
+        diag = {"n1": n1, "n2": n2, "missing": ", ".join(missing)}
+        return R_mat, t, stable, diag
 
     def _load_pocket_geometry(self, pocket_path):
         """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, ref_vec) voi
