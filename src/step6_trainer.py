@@ -157,8 +157,6 @@ class SAMGOptimizedDataset(Dataset):
         data.input_ids = torch.tensor(input_ids_list[:-1], dtype=torch.long)
         data.target_ids = torch.tensor(input_ids_list[1:], dtype=torch.long)
         data.target_7d = torch.tensor(target_7d_list[1:], dtype=torch.float)
-        neg = data.target_7d[:, 6] < 0
-        data.target_7d[neg, 3:7] *= -1.0
         data.seq_len = len(input_ids_list) - 1
 
         # Dọn rác
