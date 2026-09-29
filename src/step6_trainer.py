@@ -54,34 +54,45 @@ class SAMGOptimizedDataset(Dataset):
             split_mode = "valid"
             
         self.target_entries = splits.get(split_mode, [])
-        self.available_pkls = sorted(glob.glob(os.path.join(processed_dir, "*_sequence_7d.pkl")))
-        
-        max_len = min(len(self.target_entries), len(self.available_pkls))
-        self.valid_indices = list(range(max_len))
-        print(f"[*] Tổng số valid complexes thực tế cho chế độ [{split_mode}]: {len(self.valid_indices)}")
+        available_pkls = sorted(glob.glob(os.path.join(processed_dir, "*_sequence_7d.pkl")))
+        self.pkl_by_id = {os.path.basename(p)[: -len("_sequence_7d.pkl")]: p for p in available_pkls}
+
+        n_has_pkl = 0
+        n_excluded_unstable = 0
+        self.valid_indices = []
+        for i, entry in enumerate(self.target_entries):
+            pli_id = entry[2].split("/")[0]
+            pkl_path = self.pkl_by_id.get(pli_id)
+            if pkl_path is None:
+                continue
+            n_has_pkl += 1
+            with open(pkl_path, "rb") as f:
+                pkl_data = pickle.load(f)
+            if not pkl_data.get("frame_stable", False):
+                n_excluded_unstable += 1
+                continue
+            self.valid_indices.append(i)
+
+        assert len(self.valid_indices) > 0, f"split {split_mode}: 0 mẫu hợp lệ"
+        print(f"[*] [{split_mode}] tổng entry: {len(self.target_entries)}  "
+              f"có pkl: {n_has_pkl}  bị loại bởi frame_stable: {n_excluded_unstable}  "
+              f"valid: {len(self.valid_indices)}")
 
     def __len__(self):
         return len(self.valid_indices)
 
     def __getitem__(self, idx):
-        # --- 1. VÒNG LẶP ĐỌC SDF AN TOÀN ---
-        max_attempts = len(self.valid_indices)
-        for attempt in range(max_attempts):
-            real_idx = self.valid_indices[(idx + attempt) % len(self.valid_indices)]
-            entry = self.target_entries[real_idx]
-            pkl_path = self.available_pkls[real_idx]
-            
-            holo_pocket_fn, apo_pocket_fn, ligand_fn = entry[0], entry[1], entry[2]
-            
-            ligand_path = os.path.join(self.dataset_dir, ligand_fn)
-            ligand_dict = parse_sdf_file(ligand_path)
-            
-            # Nếu đọc thành công thì thoát vòng lặp để xử lý tiếp
-            if ligand_dict is not None:
-                break
-        
+        # --- 1. GHÉP ENTRY <-> PKL THEO pli_id (KHÔNG theo index) ---
+        entry = self.target_entries[self.valid_indices[idx]]
+        pkl_path = self.pkl_by_id[entry[2].split("/")[0]]
+
+        holo_pocket_fn, apo_pocket_fn, ligand_fn = entry[0], entry[1], entry[2]
+
+        ligand_path = os.path.join(self.dataset_dir, ligand_fn)
+        ligand_dict = parse_sdf_file(ligand_path)
+
         if ligand_dict is None:
-            raise RuntimeError(f"Không thể tìm thấy bất kỳ ligand hợp lệ nào trong dataset bắt đầu từ index {idx}")
+            raise RuntimeError(f"Không đọc được ligand: {ligand_path}")
 
         # --- 2. NẠP DỮ LIỆU PROTEIN VÀ KHỞI TẠO BATCH ---
         apo_pocket_dict = PDBProtein(os.path.join(self.dataset_dir, apo_pocket_fn)).to_dict_atom()
@@ -145,11 +156,14 @@ class SAMGOptimizedDataset(Dataset):
         data.ligand_element_batch = torch.zeros(data.ligand_element.size(0), dtype=torch.long)
 
         with open(pkl_path, "rb") as f:
-            sequence_7d = pickle.load(f)
-            
+            pkl_data = pickle.load(f)
+        sequence_7d = pkl_data["sequence"]
+
         input_ids_list = [self.vocab.get("[SOS]", 0)]
         target_7d_list = [[0.0] * 7]
         for item in sequence_7d:
+            if not item.get("frag_frame_stable", True):
+                continue
             smiles_val = item.get("smiles")
             input_ids_list.append(self.vocab.get(smiles_val, self.vocab.get("[UNK]", 1)))
             target_7d_list.append(item["spatial_tokens"])
