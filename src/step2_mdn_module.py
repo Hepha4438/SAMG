@@ -18,7 +18,7 @@ pyg_nn.knn_graph = custom_knn_graph
 # ----------------------------
 
 # P1-1: thứ tự 7 chiều cố định cho instrumentation log_scale
-DIM_NAMES = ["d", "theta", "phi", "qx", "qy", "qz", "qw"]
+DIM_NAMES = ["d", "theta", "phi", "qw", "qx", "qy", "qz"]
 
 class AutoregressiveFlowLayer(nn.Module):
     """
