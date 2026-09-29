@@ -4,6 +4,7 @@ numpy>=1.24.0,<2.0.0
 numpy-quaternion>=2024.0.13
 scipy>=1.9.0
 pandas>=2.0.0
+pyro-ppl==1.9.1
 
 # Graph Neural Networks & Geometric Computing
 torch-scatter>=2.1.0
@@ -11,7 +12,7 @@ torch-geometric>=2.3.0
 torch-sparse>=0.6.15
 torch-cluster>=1.6.3
 
-kornia>=0.6.0
+kornia==0.8.2
 
 # Protein Language Models (ESM-2 for evolutionary embeddings)
 fair-esm>=2.0.0
@@ -29,7 +30,6 @@ vina>=1.2.3
 # Training Framework & Logging (Step 6)
 pytorch-lightning>=2.0.0
 wandb>=0.15.0
-pyro-ppl==1.9.1
 
 # Dataset & Memory Management
 lmdb>=1.4.1
