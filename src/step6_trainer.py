@@ -376,7 +376,7 @@ if __name__ == "__main__":
         "batch_size": 8,
         # P2b: xem docstring SAMGLightningModule.build_ligand_input. "dummy" là mặc định
         # an toàn cho tới khi test_encoder_no_ligand.py xác nhận "empty" chạy được.
-        "ligand_mode": "dummy",
+        "ligand_mode": "empty",
         "protein_encoder": {
             "num_blocks": 3,
             "num_layers": 3,
