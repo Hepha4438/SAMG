@@ -15,6 +15,8 @@ from rdkit.Chem import AllChem, Descriptors, Lipinski, QED
 from rdkit.Geometry import Point3D
 from scipy.spatial.transform import Rotation as R
 
+from torch_geometric.utils import to_dense_batch
+
 from step6_trainer import SAMGLightningModule, SAMGOptimizedDataset
 from datasets.pl_data import ProteinLigandDataLoader
 
@@ -224,7 +226,18 @@ def main():
     if os.path.exists(VOCAB_PATH):
         with open(VOCAB_PATH, "rb") as f: vocab = pickle.load(f)
 
-    eval_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="test")
+    # P2a-3: nạp scaler TRƯỚC khi khởi tạo dataset để truyền scale[0] vào (giống hệt step6,
+    # cùng một hệ số chuẩn hóa cho residue_local_pos ở train và eval).
+    SCALER_PATH = os.path.join(PROCESSED_DIR, "scaler_7d.pt")
+    if os.path.exists(SCALER_PATH):
+        scaler_dict = torch.load(SCALER_PATH, map_location="cpu")
+        shift_factors = scaler_dict["shift"]
+        scale_factors = scaler_dict["scale"]
+        pos_scale = scale_factors.flatten()[0].item()
+    else:
+        shift_factors, scale_factors, pos_scale = None, None, None
+
+    eval_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="test", pos_scale=pos_scale)
     eval_loader = ProteinLigandDataLoader(eval_dataset, batch_size=1, shuffle=False, num_workers=2)
 
     ckpt_candidates = glob.glob(os.path.join(SAMG_ROOT, "saved_checkpoints_flow", "*.ckpt"))
@@ -235,21 +248,16 @@ def main():
 
     config = OmegaConf.create({
         "hidden_dim": 256, "num_heads": 4, "lr": 1e-4,
+        # P2b: PHẢI khớp với ligand_mode dùng lúc train (xem
+        # SAMGLightningModule.build_ligand_input) -- lệch chế độ giữa train/eval làm
+        # phân phối input của encoder khác nhau giữa hai pha.
+        "ligand_mode": "dummy",
         "protein_encoder": {
             "num_blocks": 3, "num_layers": 3, "hidden_dim": 256,
             "n_heads": 4, "knn": 16, "edge_feat_dim": 5, "num_r_gaussian": 20, "num_node_types": 8
         },
         "loss_weights": {"token": 1.0, "geo": 1.0, "pocket": 1.0, "int": 0.5, "d_threshold": 2.5}
     })
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    SCALER_PATH = os.path.join(PROCESSED_DIR, "scaler_7d.pt")
-    if os.path.exists(SCALER_PATH):
-        scaler_dict = torch.load(SCALER_PATH, map_location="cpu")
-        shift_factors = scaler_dict["shift"]
-        scale_factors = scaler_dict["scale"]
-    else:
-        shift_factors, scale_factors = None, None
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Load model với exact scaler để quá trình Inverse Scaling diễn ra chuẩn xác 100%
@@ -274,15 +282,24 @@ def main():
             batch = batch.to(device)
 
             h_protein = batch.protein_atom_feature.float() if hasattr(batch, 'protein_atom_feature') else model.prot_emb(batch.protein_element.long())
-            h_ligand = batch.ligand_atom_feature_full.float() if hasattr(batch, 'ligand_atom_feature_full') else model.lig_emb(batch.ligand_element.long())
+
+            # P2b: bỏ ligand ground-truth khỏi encoder -- PHẢI dùng đúng hàm build_ligand_input
+            # của step6 (không được tính riêng ở đây, sẽ tạo lệch phân phối train/eval).
+            num_graphs = batch.protein_element_batch.max().item() + 1
+            h_ligand, ligand_pos, batch_ligand = model.build_ligand_input(batch, device, num_graphs)
 
             step1_outputs = model.dynamic_encoder(
-                h_protein=h_protein, h_ligand=h_ligand, protein_pos=batch.protein_pos, ligand_pos=batch.ligand_pos,
-                batch_protein=batch.protein_element_batch, batch_ligand=batch.ligand_element_batch, data=batch
+                h_protein=h_protein, h_ligand=h_ligand, protein_pos=batch.protein_pos, ligand_pos=ligand_pos,
+                batch_protein=batch.protein_element_batch, batch_ligand=batch_ligand, data=batch
             )
-            num_graphs = batch.protein_element_batch.max().item() + 1
             prot_trans_batch = batch.protein_translations_batch
-            h_target = scatter_mean(step1_outputs['residue_h'], prot_trans_batch, dim=0, dim_size=num_graphs)[:, :model.config.hidden_dim].unsqueeze(1) 
+
+            # P2a-3: h_target mang hình học (giống hệt step6.forward) -- pad theo graph
+            # bằng to_dense_batch thay vì mean-pool thành 1 vector.
+            residue_h = step1_outputs['residue_h'][:, :model.config.hidden_dim]
+            residue_h_padded, target_mask = to_dense_batch(residue_h, prot_trans_batch, batch_size=num_graphs)
+            local_pos_padded, _ = to_dense_batch(batch.residue_local_pos, prot_trans_batch, batch_size=num_graphs)
+            h_target = torch.cat([residue_h_padded, local_pos_padded], dim=-1)
 
             # h_anti_raw, _ = model.static_encoder(h_protein, batch.protein_pos + 1.5, torch.zeros_like(batch.protein_pos[:,0], dtype=torch.bool), batch.protein_element_batch)
             # list_h_anti = [scatter_mean(h_anti_raw, batch.protein_element_batch, dim=0, dim_size=num_graphs).unsqueeze(1)] 
@@ -301,7 +318,9 @@ def main():
             max_len = 15
 
             for step in range(max_len):
-                logits_vocab, loss_geo, sampled_7d, _ = model.generator(input_ids, h_target, list_h_anti)
+                logits_vocab, loss_geo, sampled_7d, _ = model.generator(
+                    input_ids, h_target, list_h_anti, target_mask=target_mask
+                )
 
                 # Thu thập dự đoán Token
                 next_logits = logits_vocab[:, -1, :]

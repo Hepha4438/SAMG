@@ -207,8 +207,10 @@ class SAMGLightningModule(pl.LightningModule):
         self.save_hyperparameters()
         
         self.prot_emb = nn.Embedding(100, config.hidden_dim)
-        self.lig_emb = nn.Embedding(100, config.hidden_dim)
-        
+        # P2b (B6): +1 hàng (id 100) cho dummy ligand atom -- xem build_ligand_input().
+        # prot_emb không cần mở rộng vì dummy atom là ligand, không phải protein.
+        self.lig_emb = nn.Embedding(101, config.hidden_dim)
+
         self.dynamic_encoder = DynamicEGNN(config.protein_encoder)
         # self.static_encoder = StaticEGNN(
         #     num_layers=config.protein_encoder.num_layers, 
@@ -236,19 +238,56 @@ class SAMGLightningModule(pl.LightningModule):
             d_threshold=config.loss_weights.d_threshold
         )
 
+    def build_ligand_input(self, data_batch, device, num_graphs):
+        """
+        P2b (B6): bỏ ligand ground-truth khỏi encoder. `UniTransformer` gộp protein+ligand
+        thành một graph, nên truyền tọa độ ligand THẬT vào encoder làm vector điều kiện
+        chứa sẵn đáp án -- mọi số Vina/QED tới giờ vô giá trị vì lý do này.
+
+        `self.config.ligand_mode` (mặc định "dummy") chọn giữa hai phương án:
+          - "empty": không có nguyên tử ligand nào (tensor rỗng). CHỈ dùng khi
+            src/test_encoder_no_ligand.py xác nhận UniTransformer chạy được với ligand rỗng.
+          - "dummy": một dummy atom mỗi graph, đặt tại pocket_t (tâm học, cùng frame với
+            nhãn 7D — đọc từ pkl, KHÔNG tính lại), id embedding riêng (100, đã mở rộng
+            self.lig_emb lên 101 hàng).
+        MẶC ĐỊNH "dummy": tại thời điểm viết code này, BƯỚC 0 (test_encoder_no_ligand.py)
+        chưa verify được bằng chạy thật trong sandbox phát triển (thiếu torch_geometric/
+        torch_scatter/torch_cluster/pytorch_lightning/pyro-ppl). Đổi sang "empty" sau khi
+        chạy script đó trên máy có đủ dependency và xác nhận OK.
+
+        PHẢI dùng CHUNG hàm này cho cả train (step6) và eval (step7) -- sửa một phía sẽ
+        tạo lệch phân phối train/eval.
+        """
+        ligand_mode = self.config.get("ligand_mode", "dummy")
+        hidden_dim = self.config.hidden_dim
+        if ligand_mode == "empty":
+            h_ligand = torch.zeros(0, hidden_dim, device=device)
+            ligand_pos = torch.zeros(0, 3, device=device)
+            batch_ligand = torch.zeros(0, dtype=torch.long, device=device)
+        elif ligand_mode == "dummy":
+            pocket_t = data_batch.pocket_t.view(num_graphs, 3).to(device)
+            dummy_id = torch.full((num_graphs,), 100, dtype=torch.long, device=device)
+            h_ligand = self.lig_emb(dummy_id)
+            ligand_pos = pocket_t
+            batch_ligand = torch.arange(num_graphs, device=device)
+        else:
+            raise ValueError(f"ligand_mode không hợp lệ: {ligand_mode!r} (chỉ 'empty' hoặc 'dummy')")
+        return h_ligand, ligand_pos, batch_ligand
+
     def forward(self, data_batch):
         device = data_batch.protein_pos.device
         hidden_dim = self.config.hidden_dim
-        
+
         h_protein = data_batch.protein_atom_feature.float() if hasattr(data_batch, 'protein_atom_feature') else self.prot_emb(data_batch.protein_element.long())
-        h_ligand = data_batch.ligand_atom_feature_full.float() if hasattr(data_batch, 'ligand_atom_feature_full') else self.lig_emb(data_batch.ligand_element.long())
+
+        num_graphs = data_batch.protein_element_batch.max().item() + 1
+        h_ligand, ligand_pos, batch_ligand = self.build_ligand_input(data_batch, device, num_graphs)
 
         step1_outputs = self.dynamic_encoder(
-            h_protein=h_protein, h_ligand=h_ligand, protein_pos=data_batch.protein_pos, ligand_pos=data_batch.ligand_pos,
-            batch_protein=data_batch.protein_element_batch, batch_ligand=data_batch.ligand_element_batch, data=data_batch
+            h_protein=h_protein, h_ligand=h_ligand, protein_pos=data_batch.protein_pos, ligand_pos=ligand_pos,
+            batch_protein=data_batch.protein_element_batch, batch_ligand=batch_ligand, data=data_batch
         )
-        
-        num_graphs = data_batch.protein_element_batch.max().item() + 1
+
         prot_trans_batch = data_batch.protein_translations_batch
 
         # P2a-3: h_target mang hình học -- KHÔNG mean-pool thành 1 vector nữa. Tách
@@ -333,7 +372,10 @@ if __name__ == "__main__":
         "num_heads": 4,
         "num_gaussians": 10,
         "lr": 1e-4,
-        "batch_size": 8,  
+        "batch_size": 8,
+        # P2b: xem docstring SAMGLightningModule.build_ligand_input. "dummy" là mặc định
+        # an toàn cho tới khi test_encoder_no_ligand.py xác nhận "empty" chạy được.
+        "ligand_mode": "dummy",
         "protein_encoder": {
             "num_blocks": 3,
             "num_layers": 3,
