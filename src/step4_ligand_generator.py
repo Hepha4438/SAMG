@@ -60,14 +60,18 @@ class DualStreamLigandGenerator(nn.Module):
             nn.Linear(hidden_dim, vocab_size)
         )
         self.geometric_head = AutoregressiveFlowLayer(hidden_dim=hidden_dim, out_dim=7)
-        
+
+        # P2c: nối token_embedding của token ĐANG ĐƯỢC SINH (không phải token < t) vào
+        # context của geometric head, rồi chiếu 2*hidden_dim -> hidden_dim.
+        self.geo_in_proj = nn.Linear(hidden_dim * 2, hidden_dim)
+
         # Đăng ký Tensor vật lý được trích xuất từ Dataset
         if shift_factors is None: shift_factors = torch.zeros(7)
         if scale_factors is None: scale_factors = torch.ones(7)
         self.register_buffer('shift_factors', shift_factors.clone().detach().view(1, 7))
         self.register_buffer('scale_factors', scale_factors.clone().detach().view(1, 7))
 
-    def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None):
+    def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None, target_ids=None):
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
 
@@ -86,8 +90,24 @@ class DualStreamLigandGenerator(nn.Module):
         
         # Luồng 2: Geometric Flow (Kèm Detach bảo vệ SA Score)
         v_context_detached = v_context.detach()
-        v_context_flat = v_context_detached.view(batch_size * seq_len, self.hidden_dim)
-        
+
+        # P2c: v_context[t] chỉ mang thông tin từ token < t ("đặt cái này ở đâu"), Flow
+        # không được cho biết "cái này là gì". Nối embedding của CHÍNH token đang được
+        # sinh vào context trước khi chiếu về hidden_dim. Teacher forcing dùng target_ids
+        # (nhãn thật); sampling dùng token vừa được lấy mẫu từ logits_vocab của chính lượt
+        # forward này (chưa có nhãn thật). tok_emb.detach() để không tạo đường gradient
+        # thứ hai vào cùng bảng embedding (đã có đường chính qua self.token_embedding(input_ids)).
+        if target_7d is not None:
+            tok_emb = self.token_embedding(target_ids)
+        else:
+            sampled_ids = torch.multinomial(
+                torch.softmax(logits_vocab.detach().view(-1, logits_vocab.size(-1)), dim=-1), 1
+            ).view(batch_size, seq_len)
+            tok_emb = self.token_embedding(sampled_ids)
+
+        geo_in = self.geo_in_proj(torch.cat([v_context_detached, tok_emb.detach()], dim=-1))
+        geo_in_flat = geo_in.view(batch_size * seq_len, self.hidden_dim)
+
         if target_7d is not None:
             target_7d_flat = target_7d.view(batch_size * seq_len, 7)
             # Standardization: Áp dụng Mean/Std thực tế
@@ -95,13 +115,13 @@ class DualStreamLigandGenerator(nn.Module):
             # Dequantization: Làm dày mặt cầu quaternion (trong không gian đã chuẩn hóa)
             noise = torch.randn_like(target_scaled) * DEQUANT_SIGMA
             target_scaled = target_scaled + noise
-            
-            loss_geo_flat = self.geometric_head(v_context_flat, target=target_scaled)
+
+            loss_geo_flat = self.geometric_head(geo_in_flat, target=target_scaled)
             loss_geo = loss_geo_flat.view(batch_size, seq_len)
             sampled_7d = None
         else:
             loss_geo = None
-            sampled_scaled_flat = self.geometric_head(v_context_flat, target=None)
+            sampled_scaled_flat = self.geometric_head(geo_in_flat, target=None)
             # Inverse Scale: Lôi từ phân phối chuẩn N(0,1) ra kích thước vật lý thật
             sampled_real_flat = (sampled_scaled_flat * self.scale_factors) + self.shift_factors
 

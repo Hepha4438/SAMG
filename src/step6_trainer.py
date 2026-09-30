@@ -310,7 +310,8 @@ class SAMGLightningModule(pl.LightningModule):
         target_7d = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_7d, lens)), batch_first=True, padding_value=0.0).to(device)
 
         logits_vocab, loss_geo_raw, sampled_7d, _ = self.generator(
-            input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask
+            input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask,
+            target_ids=target_ids  # P2c: teacher forcing cho geometric head (xem step4_ligand_generator.py)
         )
 
         # --- ĐỒNG BỘ KÍCH THƯỚC ĐỘNG GIỮA PREDICTION VÀ TARGET (ĐẶC BIỆT TÁCH BẠCH PROTEIN VS LIGAND) ---
