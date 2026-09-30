@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 from torch_scatter import scatter_mean
 
 import torch_geometric.nn as pyg_nn
+from torch_geometric.utils import to_dense_batch
 from torch_cluster import knn_graph as cluster_knn_graph
 
 # Tận dụng Tensor Cores trên RTX A5000 và bật chế độ TF32 tăng tốc toán học
@@ -42,11 +43,16 @@ from step5_constraints_and_loss import GlobalLoss
 
 
 class SAMGOptimizedDataset(Dataset):
-    def __init__(self, dataset_dir, processed_dir, vocab, split_file, split_mode="train"):
+    def __init__(self, dataset_dir, processed_dir, vocab, split_file, split_mode="train", pos_scale=None):
         self.dataset_dir = dataset_dir
         self.processed_dir = processed_dir
         self.vocab = vocab
-        
+        if pos_scale is None:
+            import warnings
+            warnings.warn("pos_scale is None: residue_local_pos sẽ KHÔNG được chuẩn hóa (chia 1.0).")
+            pos_scale = 1.0
+        self.pos_scale = float(pos_scale)
+
         with open(split_file, "rb") as f:
             splits = pickle.load(f)
             
@@ -164,6 +170,15 @@ class SAMGOptimizedDataset(Dataset):
             pkl_data = pickle.load(f)
         sequence_7d = pkl_data["sequence"]
 
+        # --- P2a-3: h_target mang hình học -- đọc pocket_R/pocket_t từ pkl (do
+        # add_pocket_frame_to_pkl.py ghi, CÙNG MỘT frame với lúc step0 sinh nhãn; KHÔNG
+        # tính lại bằng code riêng ở đây) và chiếu tọa độ tâm residue vào frame học đó.
+        data.pocket_R = torch.tensor(pkl_data["pocket_R"], dtype=torch.float32)
+        data.pocket_t = torch.tensor(pkl_data["pocket_t"], dtype=torch.float32)
+        res_center = scatter_mean(data.protein_pos, data.protein_atom_to_aa_group, dim=0)
+        p_local = (res_center - data.pocket_t) @ data.pocket_R
+        data.residue_local_pos = p_local / self.pos_scale
+
         input_ids_list = [self.vocab.get("[SOS]", 0)]
         target_7d_list = [[0.0] * 7]
         for item in sequence_7d:
@@ -235,9 +250,14 @@ class SAMGLightningModule(pl.LightningModule):
         
         num_graphs = data_batch.protein_element_batch.max().item() + 1
         prot_trans_batch = data_batch.protein_translations_batch
-        
-        residue_h = step1_outputs['residue_h']
-        h_target = scatter_mean(residue_h, prot_trans_batch, dim=0, dim_size=num_graphs)[:, :hidden_dim].unsqueeze(1) 
+
+        # P2a-3: h_target mang hình học -- KHÔNG mean-pool thành 1 vector nữa. Tách
+        # residue_h theo graph (prot_trans_batch) rồi pad thành [B, R_max, H], nối tọa độ
+        # residue trong frame học canonical (P2a-3, dataset) -> [B, R_max, H+3] + mask.
+        residue_h = step1_outputs['residue_h'][:, :hidden_dim]  # bỏ 3 cột pseudo-vị trí nội bộ của SAG pooling
+        residue_h_padded, target_mask = to_dense_batch(residue_h, prot_trans_batch, batch_size=num_graphs)
+        local_pos_padded, _ = to_dense_batch(data_batch.residue_local_pos, prot_trans_batch, batch_size=num_graphs)
+        h_target = torch.cat([residue_h_padded, local_pos_padded], dim=-1)  # [B, R_max, H+3]
 
         # h_anti_raw, _ = self.static_encoder(h_protein, data_batch.protein_pos + 1.5, torch.zeros_like(data_batch.protein_pos[:,0], dtype=torch.bool), data_batch.protein_element_batch)
         # list_h_anti = [scatter_mean(h_anti_raw, data_batch.protein_element_batch, dim=0, dim_size=num_graphs).unsqueeze(1)] 
@@ -250,7 +270,9 @@ class SAMGLightningModule(pl.LightningModule):
         target_ids = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_ids, lens)), batch_first=True, padding_value=0).to(device)
         target_7d = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_7d, lens)), batch_first=True, padding_value=0.0).to(device)
 
-        logits_vocab, loss_geo_raw, sampled_7d, _ = self.generator(input_ids, h_target, list_h_anti, target_7d=target_7d)
+        logits_vocab, loss_geo_raw, sampled_7d, _ = self.generator(
+            input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask
+        )
 
         # --- ĐỒNG BỘ KÍCH THƯỚC ĐỘNG GIỮA PREDICTION VÀ TARGET (ĐẶC BIỆT TÁCH BẠCH PROTEIN VS LIGAND) ---
         num_res_pred = step1_outputs['pred_res_tr'].size(0)
@@ -334,31 +356,35 @@ if __name__ == "__main__":
         with open(VOCAB_PATH, "rb") as f:
             vocab = pickle.load(f)
 
-    train_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="train")
-    val_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="valid")
-    
-    print(f"[*] Total valid Train complexes: {len(train_dataset)}")
-    print(f"[*] Total valid Val complexes: {len(val_dataset)}")
-
-    from datasets.pl_data import ProteinLigandDataLoader
-    train_loader = ProteinLigandDataLoader(
-        train_dataset, batch_size=config.batch_size, shuffle=True, 
-        num_workers=12, pin_memory=True, persistent_workers=True, prefetch_factor=4
-    )
-    val_loader = ProteinLigandDataLoader(
-        val_dataset, batch_size=config.batch_size, shuffle=False, 
-        num_workers=6, pin_memory=True, persistent_workers=True, prefetch_factor=4
-    )
-
+    # P2a-3: nạp scaler TRƯỚC khi khởi tạo dataset để truyền scale[0] vào (chuẩn hóa
+    # residue_local_pos bằng cùng hệ số dùng cho nhãn 7D -- cả hai đều là độ dài trong
+    # cùng frame nên dùng chung một hệ số là đúng).
     SCALER_PATH = os.path.join(PROCESSED_DIR, "scaler_7d.pt")
     if os.path.exists(SCALER_PATH):
         scaler_dict = torch.load(SCALER_PATH, map_location="cpu")
         shift_factors = scaler_dict["shift"]
         scale_factors = scaler_dict["scale"]
+        pos_scale = scale_factors.flatten()[0].item()
         print("[*] Đã Load Exact Standard Scaler từ Dataset.")
     else:
-        shift_factors, scale_factors = None, None
+        shift_factors, scale_factors, pos_scale = None, None, None
         print("[!] Không tìm thấy scaler_7d.pt. Dùng cấu hình chuẩn hóa gốc.")
+
+    train_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="train", pos_scale=pos_scale)
+    val_dataset = SAMGOptimizedDataset(DATASET_DIR, PROCESSED_DIR, vocab, SPLIT_FILE, split_mode="valid", pos_scale=pos_scale)
+
+    print(f"[*] Total valid Train complexes: {len(train_dataset)}")
+    print(f"[*] Total valid Val complexes: {len(val_dataset)}")
+
+    from datasets.pl_data import ProteinLigandDataLoader
+    train_loader = ProteinLigandDataLoader(
+        train_dataset, batch_size=config.batch_size, shuffle=True,
+        num_workers=12, pin_memory=True, persistent_workers=True, prefetch_factor=4
+    )
+    val_loader = ProteinLigandDataLoader(
+        val_dataset, batch_size=config.batch_size, shuffle=False,
+        num_workers=6, pin_memory=True, persistent_workers=True, prefetch_factor=4
+    )
 
     # -- Khởi tạo Model --
     model = SAMGLightningModule(

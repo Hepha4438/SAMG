@@ -67,17 +67,19 @@ class DualStreamLigandGenerator(nn.Module):
         self.register_buffer('shift_factors', shift_factors.clone().detach().view(1, 7))
         self.register_buffer('scale_factors', scale_factors.clone().detach().view(1, 7))
 
-    def forward(self, input_ids, h_target, list_h_anti, target_7d=None):
+    def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None):
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
-        
+
         causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
-        
+
         x = self.token_embedding(input_ids) * math.sqrt(self.hidden_dim)
         x = self.positional_encoding(x)
-        
+
         h_ar = self.ar_decoder(x, mask=causal_mask, is_causal=True)
-        v_context, attn_weights = self.attention_hub(h_ar, h_target, list_h_anti)
+        # P2a-3: h_target giờ là [B, R_max, H+3] (feature + tọa độ residue); target_mask
+        # [B, R_max] đánh dấu residue thật để loại padding khỏi softmax của attention hub.
+        v_context, attn_weights = self.attention_hub(h_ar, h_target, list_h_anti, target_mask=target_mask)
         
         # Luồng 1: Semantic
         logits_vocab = self.semantic_head(v_context)
