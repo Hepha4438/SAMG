@@ -251,7 +251,7 @@ def main():
         # P2b: PHẢI khớp với ligand_mode dùng lúc train (xem
         # SAMGLightningModule.build_ligand_input) -- lệch chế độ giữa train/eval làm
         # phân phối input của encoder khác nhau giữa hai pha.
-        "ligand_mode": "dummy",
+        "ligand_mode": "empty",
         "protein_encoder": {
             "num_blocks": 3, "num_layers": 3, "hidden_dim": 256,
             "n_heads": 4, "knn": 16, "edge_feat_dim": 5, "num_r_gaussian": 20, "num_node_types": 8
