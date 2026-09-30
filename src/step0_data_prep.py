@@ -99,7 +99,8 @@ class SAMGDataPreprocessor:
                     return np.column_stack((x_axis, y_axis, z_axis)), p1
         return np.eye(3), points[0]
 
-    def _get_pocket_frame(self, pocket_coords, atom_names, tau=0.30):
+    @staticmethod
+    def _get_pocket_frame(pocket_coords, atom_names, tau=0.30):
         """Frame canonical cua hoc. Tra ve (R, t, stable, diag).
         R: cot la 3 truc. t: tam hoc. Khong PCA, khong tri rieng, khong quy uoc dau.
 
@@ -162,9 +163,15 @@ class SAMGDataPreprocessor:
         diag = {"n1": n1, "n2": n2, "missing": ", ".join(missing)}
         return R_mat, t, stable, diag
 
-    def _load_pocket_geometry(self, pocket_path):
-        """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, atom_names) cho _get_pocket_frame."""
-        structure = self.parser.get_structure("pocket", pocket_path)
+    @staticmethod
+    def _load_pocket_geometry(pocket_path):
+        """Doc pocket PDB (bo HOH). Tra ve (pocket_coords, atom_names) cho _get_pocket_frame.
+
+        @staticmethod (P2a-1): de import/goi duoc tu ngoai (vd. add_pocket_frame_to_pkl.py)
+        ma khong can khoi tao ca SAMGDataPreprocessor. Dung PDBParser rieng thay vi self.parser
+        -- cung cau hinh QUIET=True nhu __init__, khong doi hanh vi/gia tri tra ve."""
+        parser = PDBParser(QUIET=True)
+        structure = parser.get_structure("pocket", pocket_path)
         coords, names = [], []
         for residue in structure.get_residues():
             if residue.get_resname() == "HOH":
