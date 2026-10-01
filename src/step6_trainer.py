@@ -276,7 +276,17 @@ class SAMGLightningModule(pl.LightningModule):
             raise ValueError(f"ligand_mode không hợp lệ: {ligand_mode!r} (chỉ 'empty' hoặc 'dummy')")
         return h_ligand, ligand_pos, batch_ligand
 
-    def forward(self, data_batch, pocket_shuffle_perm=None, pocket_shuffle_debug=False):
+    def build_h_target(self, data_batch):
+        """
+        M11-c (plan.md "PLAN Rev 12"): tach doan dung h_target/target_mask ra khoi forward()
+        -- THUAN REFACTOR, khong doi hanh vi, chi di chuyen code nguyen ven. forward() goi
+        ham nay roi ap pocket_shuffle_perm/debug NGAY SAU (logic shuffle GIU trong forward(),
+        khong chuyen vao day). Tra ve them step1_outputs/num_graphs (ngoai h_target,
+        target_mask) de forward() dung lai cho pred_res_tr/rot/chi/pocket loss ben duoi MA
+        KHONG phai goi self.dynamic_encoder lan thu hai (tranh nhan doi chi phi GNN moi
+        training step). M11 (src/probe_pose_regression.py) goi CHINH ham nay de lay
+        h_target/target_mask dung voi pipeline chinh.
+        """
         device = data_batch.protein_pos.device
         hidden_dim = self.config.hidden_dim
 
@@ -299,6 +309,13 @@ class SAMGLightningModule(pl.LightningModule):
         residue_h_padded, target_mask = to_dense_batch(residue_h, prot_trans_batch, batch_size=num_graphs)
         local_pos_padded, _ = to_dense_batch(data_batch.residue_local_pos, prot_trans_batch, batch_size=num_graphs)
         h_target = torch.cat([residue_h_padded, local_pos_padded], dim=-1)  # [B, R_max, H+3]
+
+        return h_target, target_mask, step1_outputs, num_graphs
+
+    def forward(self, data_batch, pocket_shuffle_perm=None, pocket_shuffle_debug=False):
+        device = data_batch.protein_pos.device
+
+        h_target, target_mask, step1_outputs, num_graphs = self.build_h_target(data_batch)
 
         # M6 (G5-cheap): pocket_shuffle_perm hoan vi h_target/target_mask theo chieu batch de
         # pha su ghep doi hoc<->ligand (doi chung "shuffled"). None -> KHONG doi gi, duong chay
