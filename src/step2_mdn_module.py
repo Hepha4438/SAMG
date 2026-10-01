@@ -42,7 +42,18 @@ class AutoregressiveFlowLayer(nn.Module):
         
         # --- ĐIỂM SỬA CHỮA ---
         # Khởi tạo mạng tự hồi quy có điều kiện: (input_dim, context_dim, hidden_dims)
-        self.arn = ConditionalAutoRegressiveNN(out_dim, hidden_dim, [hidden_dim, hidden_dim])
+        # P3a-1: permutation TƯỜNG MINH thay vì để Pyro tự sinh torch.randperm() từ RNG
+        # toàn cục mỗi process (RESEARCH_CONTEXT 20.3 -- không seed nên mỗi run một
+        # permutation khác, làm mọi so sánh giữa các run vô nghĩa). torch.arange(out_dim)
+        # => thứ tự tự hồi quy CHÍNH LÀ DIM_NAMES: d, theta, phi, qw, qx, qy, qz. Chọn thứ
+        # tự này KHÔNG phải vì nó tối ưu, mà vì nó xác định và đọc được: d/theta/phi (vị
+        # trí) đi trước qw/qx/qy/qz (hướng) là thứ tự nhân quả có nghĩa vật lý, và bốn
+        # chiều quaternion nằm liền kề nên có thể đọc trực tiếp "chiều quaternion thứ k
+        # thấy k-1 chiều trước".
+        self.arn = ConditionalAutoRegressiveNN(
+            out_dim, hidden_dim, [hidden_dim, hidden_dim],
+            permutation=torch.arange(out_dim),
+        )
         self.transform = ConditionalAffineAutoregressive(self.arn)
         
         # Phân phối chuẩn gốc Z ~ N(0, I)
@@ -55,12 +66,21 @@ class AutoregressiveFlowLayer(nn.Module):
         self._pin_sum = torch.zeros(out_dim)
         self._ls_count = 0
         self._nll_reservoir = []
+        # P3a-3: coupling TẠM THỜI -- hook trên self.arn (bên dưới) không nhìn thấy
+        # pad_mask của forward() vì forward_hook chỉ nhận (module, input, output) của
+        # self.arn, không phải tham số của AutoregressiveFlowLayer.forward(). forward()
+        # gán biến này NGAY TRƯỚC khi gọi log_prob() (nơi hook được kích hoạt ~7 lần do
+        # inverse tuần tự) rồi đặt lại None ngay sau đó.
+        self._cur_pad_mask = None
 
         def _log_scale_hook(module, input, output):
             if not self.training:
                 return
             with torch.no_grad():
                 ls = output[1].detach()
+                if self._cur_pad_mask is not None:
+                    valid = self._cur_pad_mask.detach().to(torch.bool)
+                    ls = ls[valid]
                 self._ls_sum += ls.sum(0).cpu()
                 self._pin_sum += (ls <= self._ls_floor + 1e-3).float().sum(0).cpu()
                 self._ls_count += ls.shape[0]
@@ -115,7 +135,11 @@ class AutoregressiveFlowLayer(nn.Module):
 
         if target is not None:
             # LUỒNG TRAINING: Tính Exact Log-Likelihood
+            # P3a-3: gán TRƯỚC khi hook trên self.arn chạy (bên trong log_prob), đặt lại
+            # None NGAY SAU -- xem comment coupling tạm thời ở __init__.
+            self._cur_pad_mask = pad_mask
             log_prob = flow_dist.log_prob(target)
+            self._cur_pad_mask = None
 
             # --- P1-1: Reservoir cho NLL (median/p99 chính xác cuối epoch) ---
             # CHỈ nạp token THẬT -- trước bản sửa này, reservoir lấy mẫu TRƯỚC khi mask
@@ -202,8 +226,8 @@ class DiagonalGaussianHead(nn.Module):
 
     def forward(self, h, target=None, pad_mask=None):
         """
-        pad_mask: [N] Bool/float, True/1 = token THẬT. CHỈ lọc reservoir NLL cho đúng
-        tổng thể với Geo_Loss_Unclamped (step5); không ảnh hưởng nll trả về.
+        pad_mask: [N] Bool/float, True/1 = token THẬT. Lọc CẢ BA: _ls_sum/_pin_sum/_ls_count
+        (P3a-3) VÀ reservoir NLL -- không ảnh hưởng nll trả về (loss chính step5 tự mask).
         """
         c = self.context_proj(h)
         mu = self.mu_head(c)
@@ -216,9 +240,16 @@ class DiagonalGaussianHead(nn.Module):
 
             if self.training:
                 with torch.no_grad():
-                    self._ls_sum += log_sigma.detach().sum(0).cpu()
-                    self._pin_sum += (log_sigma.detach() <= self._ls_floor + 1e-3).float().sum(0).cpu()
-                    self._ls_count += log_sigma.shape[0]
+                    # P3a-3: _ls_sum/_pin_sum cũng phải mask padding, không chỉ reservoir
+                    # (commit bcb3e99 chỉ sửa reservoir -- RESEARCH_CONTEXT 20.6).
+                    if pad_mask is not None:
+                        valid = pad_mask.detach().to(torch.bool).flatten()
+                        ls_v = log_sigma.detach()[valid]
+                    else:
+                        ls_v = log_sigma.detach()
+                    self._ls_sum += ls_v.sum(0).cpu()
+                    self._pin_sum += (ls_v <= self._ls_floor + 1e-3).float().sum(0).cpu()
+                    self._ls_count += ls_v.shape[0]
 
                     nll_flat = nll.detach().flatten().cpu()
                     if pad_mask is not None:

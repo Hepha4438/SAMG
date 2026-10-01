@@ -1,6 +1,7 @@
 import os
 import glob
 import pickle
+import subprocess
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -369,12 +370,27 @@ class SAMGLightningModule(pl.LightningModule):
 
 
 if __name__ == "__main__":
+    # P3a-2: tai lap duoc -- seed toan cuc + in dau vet moi run (RESEARCH_CONTEXT 20.3:
+    # KHONG seed truoc day nen permutation cua ARN ngau nhien moi process, lam moi so
+    # sanh giua cac run vo nghia).
+    SEED = 1234
+    try:
+        _git_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=SAMG_ROOT, stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception as e:
+        _git_head = f"KHONG LAY DUOC ({e})"
+    print(f"git rev-parse HEAD: {_git_head}")
+    print(f"SEED: {SEED}")
+    pl.seed_everything(SEED, workers=True)
+
     config = OmegaConf.create({
         "hidden_dim": 256,
         "num_heads": 4,
         "num_gaussians": 10,
         "lr": 1e-4,
         "batch_size": 8,
+        "seed": SEED,
         # P2b: xem docstring SAMGLightningModule.build_ligand_input. "dummy" là mặc định
         # an toàn cho tới khi test_encoder_no_ligand.py xác nhận "empty" chạy được.
         "ligand_mode": "empty",
@@ -435,11 +451,17 @@ if __name__ == "__main__":
 
     # -- Khởi tạo Model --
     model = SAMGLightningModule(
-        config, 
-        vocab_size=len(vocab), 
-        shift_factors=shift_factors, 
+        config,
+        vocab_size=len(vocab),
+        shift_factors=shift_factors,
         scale_factors=scale_factors
     )
+
+    # P3a-2: permutation thực tế của ARN -- chỉ tồn tại khi geo_head="maf"
+    # (AutoregressiveFlowLayer); DiagonalGaussianHead không có autoregressive coupling.
+    _arn = getattr(model.generator.geometric_head, "arn", None)
+    _permutation = getattr(_arn, "permutation", None) if _arn is not None else None
+    print(f"geo_head: {config.get('geo_head', 'diag_gauss')}  permutation ARN: {_permutation}")
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(SAMG_ROOT, "saved_checkpoints_flow"),
@@ -462,8 +484,11 @@ if __name__ == "__main__":
         logger=logger,
         callbacks=[checkpoint_callback, periodic_checkpoint_callback, logging_callback],
         log_every_n_steps=10,
-        gradient_clip_val=1.0,          
-        accumulate_grad_batches=2     
+        gradient_clip_val=1.0,
+        accumulate_grad_batches=2,
+        # P3a-2: tai lap duoc. Neu do duoc cham qua 20% so voi khong co co nay tren GPU
+        # that, BO di nhung PHAI giu pl.seed_everything(SEED) o tren va ghi ro vao log.
+        deterministic=True,
     )
 
     ckpt_path = None
