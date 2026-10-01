@@ -35,6 +35,7 @@ import os
 import sys
 import glob
 import math
+import time
 import argparse
 import subprocess
 import pickle
@@ -70,6 +71,9 @@ def default_ckpt(samg_root):
 
 def main():
     print_git_head()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}")
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=None,
@@ -111,9 +115,10 @@ def main():
     })
 
     model = st.SAMGLightningModule.load_from_checkpoint(
-        ckpt_path, map_location="cpu", config=config, vocab_size=len(vocab),
+        ckpt_path, map_location=device, config=config, vocab_size=len(vocab),
         shift_factors=shift_factors, scale_factors=scale_factors, strict=False,
     )
+    model.to(device)
     model.train()  # can cho hook co san trong step2 chay (gate self.training); forward boc no_grad ben duoi
 
     train_dataset = st.SAMGOptimizedDataset(
@@ -144,11 +149,14 @@ def main():
         return torch.zeros_like(*a, **kw)
 
     n_batches_done = 0
+    n_real_so_far = 0
+    t_start = time.time()
     try:
         torch.randn_like = _zero_randn_like
         for i, batch in enumerate(loader):
             if i >= args.n_batches:
                 break
+            batch = batch.to(device)
             captured.clear()
             with torch.no_grad():
                 model.forward(batch)
@@ -184,15 +192,20 @@ def main():
             target_real = target_scaled_clean[pad_mask]
             z_real = (target_real - mu_real) / log_scale[pad_mask].exp()
             z_real_chunks.append(z_real)
+            n_real_so_far += int(pad_mask.sum().item())
+
+            if (i + 1) % 20 == 0:
+                print(f"batch {i + 1}/{args.n_batches}, n_real={n_real_so_far} "
+                      f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
     finally:
         torch.randn_like = original_randn_like
         hook_handle.remove()
 
     print(f"[*] So batch da dung: {n_batches_done} (yeu cau toi thieu 200; dung het loader neu it hon)")
 
-    ls_all = torch.cat(ls_all_chunks, dim=0)
-    ls_real = torch.cat(ls_real_chunks, dim=0)
-    z_real = torch.cat(z_real_chunks, dim=0)
+    ls_all = torch.cat(ls_all_chunks, dim=0).cpu()
+    ls_real = torch.cat(ls_real_chunks, dim=0).cpu()
+    z_real = torch.cat(z_real_chunks, dim=0).cpu()
     n_real = ls_real.shape[0]
     n_all = ls_all.shape[0]
     print(f"[*] n token THAT (sau pad_mask): {n_real}")
