@@ -25,24 +25,40 @@ truoc tat ca cac nhanh khac trong moi batch.
 KHONG train: torch.no_grad() quanh moi lan forward, model.train() CHI de hook log_scale co
 san trong step2 chay (gate self.training) -- khong backward, khong optimizer.step().
 
-VE VIEC VO HIEU HOA DEQUANTIZATION NOISE: ke thua ky thuat cua measure_logscale_realtokens.py
-(M5) va M6 vi cung ly do ky thuat -- voi MAF, mu/log_scale cua chieu k phu thuoc cac chieu
-dung truoc qua gia tri z DA GIAI NGHICH cua chung, nen de tinh z = (target_scaled-mu)/sigma
-cho dung, target_scaled phai khop CHINH XAC voi gia tri thuc su dua vao log_prob() luc do.
-Patch tam thoi torch.randn_like -> zeros_like quanh moi lan goi model.forward (restore ngay
-sau bang try/finally).
+VE NHIEU DEQUANTIZATION (M10, plan.md "PLAN Rev 9"; RESEARCH_CONTEXT Muc 27.2): M5/M6/M7 zero
+hoa nhieu (torch.randn_like -> zeros_like) de z = (target_scaled-mu)/sigma tinh dung (MAF can
+target_scaled khop CHINH XAC gia tri dua vao log_prob() do tinh autoregressive). M8's
+run_noop_check KHONG zero nhieu va phat hien nguyen nhan FAIL cua no la step4_ligand_
+generator.py:123 ve mot nhieu MOI moi lan forward (27.2). M10 THAY phep zero-hoa bang KHOA
+SEED: truoc MOI lan forward cua MOI nhanh trong CUNG mot batch, dat lai torch.manual_seed(1234
++ batch_idx) + torch.cuda.manual_seed_all(...) (xem run_branch(seed=...)) de moi nhanh ve
+CUNG mot lan nhieu -- giu nhieu that (khong zero) de phan phoi input giong luc huan luyen, chi
+khoa cho no GIONG HET nhau giua cac nhanh thay vi khac nhau ngau nhien.
 
 Cong thuc NLL (xac minh truc tiep tren pyro-ppl==1.9.1, xem M4/M5):
     NLL = 0.5*sum_i(z_i^2) + 3.5*ln(2*pi) + sum_i(log_scale_i)
 
-KIEM TRA KHONG-DOI (thay cho doi chieu Muc 24.1 cu -- RESEARCH_CONTEXT 25.1 chi ra do la
-phep so sai: hai MAU batch khac nhau vi hai script dung shuffle khac nhau o loader, nen LUON
-lech bat ke code co dung hay khong). Phep kiem MOI, CHINH XAC, TRONG CUNG mot batch: forward
-voi pocket_shuffle_perm=None va forward voi pocket_shuffle_perm=torch.arange(B) (hoan vi dong
-nhat) phai cho mu/log_scale BIT-IDENTICAL (torch.equal), vi ca hai la CUNG mot phep hoan vi ve
-mat toan hoc. Chay tren 3 batch dau, in PASS/FAIL.
+KIEM TRA KHONG-DOI: tu M10 CHI con la CHAN DOAN (khong phai tieu chi quyet dinh nua -- 27.2 cho
+thay FAIL cua M8 la do nhieu dequant chua khoa, khong phai loi logic perm). Tieu chi THAT nam o
+nhanh `noop` (M10-2, so sanh trong don vi R2) o cuoi script.
 
-Tieu chi doc M7-a (ghi cung TRUOC khi chay, plan.md, CHI co y nghia xac nhan khi --split valid):
+NHANH `noop` (M10-2, plan.md "PLAN Rev 9"): them nhanh thu nam pocket_shuffle_perm=torch.
+arange(B) -- DONG NHAT VE LOGIC voi `full`, cung chay qua toan bo loader/vong lap chinh (khong
+chi 3 batch dau nhu phep kiem CHAN DOAN o tren). delta R2(full-noop) o CA 7 chieu la SAN NHIEU
+(noise floor) dung don vi cua tieu chi M7-a/M7-b -- xem "TIEU CHI DOC M10" cuoi script.
+
+Tieu chi doc M10 (ghi cung TRUOC khi chay, plan.md "PLAN Rev 9", RESEARCH_CONTEXT Muc 27) --
+PHAI doc TRUOC M7-a/M7-b, ca ba dieu kien, KHONG tu sua nguong sau khi thay so:
+    1. delta R2(full-noop) < 0.002 o MOI chieu (7/7), VA max|delta mu|/max|delta log_scale|
+       (full vs noop, chan doan) < 1e-4
+        => KHONG dat: con nguon ngau nhien chua khoa. DUNG, tim tiep, KHONG doc gi khac.
+    2. Dat (1) thi moi doc M7-a/M7-b, VOI dieu kien bo sung: delta R2(d, shuffled) phai LON HON
+       delta R2(d, noop) it nhat 10 lan. Duoi 10 lan => tin hieu khong tach khoi san nhieu,
+       khong ket luan (du dat nguong M7-a).
+    3. Nguong M7-a/M7-b (xem duoi) GIU NGUYEN, khong duoc sua sau khi thay so.
+
+Tieu chi doc M7-a (ghi cung TRUOC khi chay, plan.md, CHI co y nghia xac nhan khi --split valid
+VA M10 dieu kien 1+2 o tren DAT):
     delta R2(d) > 0.10  VA  delta R2(theta) > 0.015  VA  delta R2(phi) > 0.015
     VA ca ba deu DUONG o nhanh roll1 (cung dau voi shuffled)
         => XAC NHAN: hoc protein chi phoi tinh tien. Bang chung dau tien duoc XAC NHAN.
@@ -61,6 +77,8 @@ KHONG so voi hang so 0.171 cua M6/train, vi do la mau khac):
 
 Cach chay (server GPU, dung python -u):
     python -u src/measure_pocket_shuffle.py --split valid [--ckpt PATH] [--batch-size N] | tee log.txt
+    --loader-shuffle (M10-b, RESEARCH_CONTEXT 27.6): them co nay de chay --split train voi
+    shuffle=True (giai nghich ly valid > train -- xem tieu chi M10-b trong plan.md).
 """
 import os
 import sys
@@ -136,12 +154,19 @@ def make_sizematched_perm(ext, device, max_tries=10):
     return perm, n_identity
 
 
-def run_branch(model, batch, device, perm, debug=False):
-    """Forward 1 lan voi pocket_shuffle_perm=perm (hoac None). Tra ve (mu, log_scale) tu hook
-    rieng dang ky tren arn trong luc goi nay (go ngay sau). debug=True truyen tiep
-    pocket_shuffle_debug=True vao step6 (M8) de in shape/is_contiguous() cua h_target/
-    target_mask NGAY TAI diem ap perm -- CHI dung trong run_noop_check, KHONG dung o vong
-    do chinh (se spam qua nhieu dong cho 200+ batch x 4 nhanh)."""
+def run_branch(model, batch, device, perm, debug=False, seed=None):
+    """Forward 1 lan voi pocket_shuffle_perm=perm (hoac None). Neu seed khac None, dat lai
+    torch.manual_seed(seed) + torch.cuda.manual_seed_all(seed) NGAY TRUOC lan forward nay
+    (M10-1, RESEARCH_CONTEXT 27.2/plan.md "PLAN Rev 9") de nhanh nay ve CUNG mot lan nhieu
+    dequant (step4_ligand_generator.py:123) nhu cac nhanh khac GOI VOI CUNG seed trong CUNG
+    mot batch -- khong con zero-hoa nhieu nhu M5-M7. Tra ve (mu, log_scale) tu hook rieng dang
+    ky tren arn trong luc goi nay (go ngay sau). debug=True truyen tiep pocket_shuffle_debug=
+    True vao step6 (M8) de in shape/is_contiguous() cua h_target/target_mask NGAY TAI diem ap
+    perm -- CHI dung trong run_noop_check, KHONG dung o vong do chinh (se spam qua nhieu dong
+    cho 200+ batch x 5 nhanh)."""
+    if seed is not None:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     captured = {}
     arn = model.generator.geometric_head.arn
     h = arn.register_forward_hook(
@@ -157,20 +182,16 @@ def run_branch(model, batch, device, perm, debug=False):
 
 def run_noop_check(model, loader, device, n_check=3):
     """
-    M8 (RESEARCH_CONTEXT 26, thay cho phep kiem torch.equal cu -- 26.2 chi ra bit-identical
-    la dieu KHONG THE dat duoc qua advanced indexing tren GPU ngay ca khi logic dung, nen
-    torch.equal khong co kha nang PASS va khong phan xu duoc gi).
-
-    forward pocket_shuffle_perm=None vs pocket_shuffle_perm=torch.arange(B) (hoan vi dong
-    nhat, ve mat toan hoc la no-op) TRONG CUNG mot batch. In max|delta mu|, max|delta
-    log_scale|, torch.allclose(atol=1e-5, rtol=1e-4) -> PASS/FAIL, VA van giu torch.equal
-    nhung doi nhan ro no KY VONG FAIL tren GPU (khong phai dau hieu loi). debug=True tren
-    ca hai lan goi de step6 in shape/is_contiguous() cua h_target/target_mask NGAY TAI diem
-    ap perm (doc cung voi max|delta| de phan xu (i) vo hai vs (ii) pha huy).
+    CHAN DOAN (M10, plan.md "PLAN Rev 9"; RESEARCH_CONTEXT 27.2) -- KHONG CON LA TIEU CHI.
+    M8 dung phep nay lam tieu chi (i)/(ii) va FAIL; 27.2 xac dinh nguyen nhan FAIL la nhieu
+    dequant ve lai moi lan forward (step4_ligand_generator.py:123), khong phai loi logic perm.
+    Tu M10, seed duoc khoa truoc moi forward (xem run_branch(seed=...)) nen hai nhanh nay ve
+    CUNG mot nhieu; cac so duoi day chi con dung de CHAN DOAN shape/contiguous/do lon -- TIEU
+    CHI THAT nam o bang delta R2(full-noop) cuoi script (ham main()).
     """
     print("\n" + "=" * 90)
-    print(f"KIEM TRA KHONG-DOI (M8): perm=None vs perm=torch.arange(B), TRONG CUNG batch, "
-          f"{n_check} batch dau. pocket_shuffle_debug=True (xem cac dong [pocket_shuffle_debug]).")
+    print(f"CHAN DOAN KHONG-DOI (khong con la tieu chi, M10): perm=None vs perm=torch.arange(B), "
+          f"seed khoa (1234+batch_idx), TRONG CUNG batch, {n_check} batch dau.")
     print("=" * 90)
     max_deltas = []
     for i, batch in enumerate(itertools.islice(loader, n_check)):
@@ -179,9 +200,9 @@ def run_noop_check(model, loader, device, n_check=3):
         identity_perm = torch.arange(num_graphs, device=device)
 
         print(f"\n  --- batch {i}: perm=None ---")
-        mu_none, ls_none = run_branch(model, batch, device, None, debug=True)
+        mu_none, ls_none = run_branch(model, batch, device, None, debug=True, seed=SEED + i)
         print(f"  --- batch {i}: perm=torch.arange(B) ---")
-        mu_id, ls_id = run_branch(model, batch, device, identity_perm, debug=True)
+        mu_id, ls_id = run_branch(model, batch, device, identity_perm, debug=True, seed=SEED + i)
 
         max_delta_mu = (mu_none - mu_id).abs().max().item()
         max_delta_ls = (ls_none - ls_id).abs().max().item()
@@ -191,32 +212,15 @@ def run_noop_check(model, loader, device, n_check=3):
                        and torch.allclose(ls_none, ls_id, atol=1e-5, rtol=1e-4))
         bitwise_equal = torch.equal(mu_none, mu_id) and torch.equal(ls_none, ls_id)
 
-        print(f"    max|delta mu|        = {max_delta_mu:.3e}")
-        print(f"    max|delta log_scale| = {max_delta_ls:.3e}")
-        print(f"    torch.allclose(atol=1e-5, rtol=1e-4): {'PASS' if allclose_ok else 'FAIL'}")
-        print(f"    bit-identical (torch.equal) (ky vong FAIL tren GPU, KHONG phai loi): "
-              f"{'PASS' if bitwise_equal else 'FAIL'}")
+        print(f"    max|delta mu|        = {max_delta_mu:.3e}  [chan doan]")
+        print(f"    max|delta log_scale| = {max_delta_ls:.3e}  [chan doan]")
+        print(f"    torch.allclose(atol=1e-5, rtol=1e-4) [chan doan]: {'PASS' if allclose_ok else 'FAIL'}")
+        print(f"    bit-identical (torch.equal) [chan doan, ky vong FAIL tren GPU vi advanced "
+              f"indexing, KHONG phai loi]: {'PASS' if bitwise_equal else 'FAIL'}")
 
     overall_max_delta = max(max_deltas)
-    print(f"\n  max|delta| toan bo ({n_check} batch, ca mu va log_scale) = {overall_max_delta:.3e}")
-
-    print("\n  TIEU CHI DOC (plan.md M8 -- PHAI doi chieu CA voi shape in boi cac dong "
-          "[pocket_shuffle_debug] o tren):")
-    if overall_max_delta < 1e-4:
-        print(f"    max|delta| = {overall_max_delta:.3e} < 1e-4. NEU dong [pocket_shuffle_debug]")
-        print("    o tren cho thay shape tai diem ap la 3 chieu [B, R_max, H+3]")
-        print("    => (i) VO HAI: chi la lam tron do layout bo nho. Muc 25 va M7 DUOC PHUC HOI,")
-        print("       doc binh thuong.")
-    elif overall_max_delta > 1e-2:
-        print(f"    max|delta| = {overall_max_delta:.3e} > 1e-2")
-        print("    => (ii) PHA HUY: perm dang duoc ap vao tensor sai hinh dang. Muc 25 va M7 BI")
-        print("       HUY HOAN TOAN, phai sua step6 roi chay lai M6 va M7.")
-    else:
-        print(f"    max|delta| = {overall_max_delta:.3e} o khoang trung gian (1e-4 - 1e-2)")
-        print("    => KHONG KET LUAN. Xem max|delta mu| va max|delta log_scale| rieng cho tung")
-        print("       batch o tren de truy (hai 'lop' duy nhat co the tach duoc o muc nay).")
-    print("    Bat ke max|delta| la bao nhieu: NEU dong [pocket_shuffle_debug] cho thay shape")
-    print("    KHONG phai 3 chieu => (ii) PHA HUY, ghi de len ket luan tu max|delta| o tren.")
+    print(f"\n  max|delta| toan bo ({n_check} batch, ca mu va log_scale) = {overall_max_delta:.3e} [chan doan]")
+    print("  (Tieu chi THAT nam o bang 'delta R2(full-noop)' cuoi script -- dung don vi cua cau hoi.)")
 
     return overall_max_delta
 
@@ -233,6 +237,9 @@ def main():
     ap.add_argument("--n-batches", type=int, default=200,
                      help="So batch toi da (bo qua neu --split valid: dung het tap valid)")
     ap.add_argument("--split", choices=["train", "valid", "test"], default="train")
+    ap.add_argument("--loader-shuffle", action="store_true", default=False,
+                     help="M10-b (RESEARCH_CONTEXT 27.6): shuffle=True cho loader, kiem xem "
+                          "nghich ly valid>train co phai hien vat cua tap con co thu tu khong")
     args = ap.parse_args()
 
     import step6_trainer as st
@@ -280,8 +287,11 @@ def main():
         st.DATASET_DIR, st.PROCESSED_DIR, vocab, st.SPLIT_FILE, split_mode=args.split, pos_scale=pos_scale
     )
     from datasets.pl_data import ProteinLigandDataLoader
-    # shuffle=False LUON: cac nhanh/lan chay/phep kiem khong-doi phai doc CUNG thu tu batch.
-    loader = ProteinLigandDataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    # shuffle theo --loader-shuffle (mac dinh False; M10-b/27.6 -- kiem nghich ly valid>train
+    # co phai hien vat cua "200 batch DAU theo thu tu dataset" cua train khong).
+    loader = ProteinLigandDataLoader(
+        dataset, batch_size=args.batch_size, shuffle=args.loader_shuffle, num_workers=0
+    )
 
     if args.split == "valid":
         n_batches_target = len(loader)
@@ -289,17 +299,18 @@ def main():
     else:
         n_batches_target = args.n_batches
 
-    print(f"\n[*] CAU HINH LOADER: split={args.split}  shuffle=False  batch_size={args.batch_size}  "
-          f"n_batches_du_kien={n_batches_target}")
+    print(f"\n[*] CAU HINH LOADER: split={args.split}  shuffle={args.loader_shuffle}  "
+          f"batch_size={args.batch_size}  n_batches_du_kien={n_batches_target}")
 
-    # Yeu cau 4: kiem tra khong-doi TRUOC khi do (dung mot vong lap loader rieng -- DataLoader
-    # voi shuffle=False la deterministic nen vong sau van doc dung thu tu batch tu dau).
+    # CHAN DOAN khong-doi TRUOC khi do (dung mot vong lap loader rieng; neu --loader-shuffle
+    # thi lan lap nay va vong do chinh ben duoi KHONG doc cung thu tu batch -- khong sao vi
+    # day chi con la chan doan, khong phai tieu chi, xem run_noop_check()).
     run_noop_check(model, loader, device, n_check=3)
 
     gen_shift = model.generator.shift_factors.view(1, 7).double()
     gen_scale = model.generator.scale_factors.view(1, 7).double()
 
-    branches = ["full", "shuffled", "roll1", "shuffled_sizematched"]
+    branches = ["full", "shuffled", "roll1", "shuffled_sizematched", "noop"]
     ls_chunks = {b: [] for b in branches}
     z_chunks = {b: [] for b in branches}
 
@@ -314,23 +325,19 @@ def main():
 
     ht_hook_handle = model.generator.attention_hub.register_forward_pre_hook(_ht_pre_hook, with_kwargs=True)
 
-    original_randn_like = torch.randn_like
-
-    def _zero_randn_like(*a, **kw):
-        return torch.zeros_like(*a, **kw)
-
     n_batches_done = 0
     n_real_so_far = 0
     n_fallback_shuffled = 0
     n_sizematched_identity = 0
     n_total_graphs = 0
+    noop_diag_max_deltas = []  # M10-2: chan doan rieng (don vi mu/log_scale), xem M10 dieu kien 1
     t_start = time.time()
     try:
-        torch.randn_like = _zero_randn_like
         for i, batch in enumerate(loader):
             if i >= n_batches_target:
                 break
             batch = batch.to(device)
+            seed_i = SEED + i  # M10-1: moi nhanh trong batch nay dung CUNG seed -- CUNG nhieu dequant
 
             num_graphs = batch.protein_element_batch.max().item() + 1
             n_total_graphs += num_graphs
@@ -350,7 +357,7 @@ def main():
 
             # NHANH full TRUOC (bat buoc chay dau) -- hook pre-hook bat h_target/target_mask
             # cua CHINH nhanh nay de tinh pocket_extent cho shuffled_sizematched.
-            mu_full, ls_full = run_branch(model, batch, device, None)
+            mu_full, ls_full = run_branch(model, batch, device, None, seed=seed_i)
             h_target_full = captured_ht["h_target"]
             target_mask_full = captured_ht["target_mask"]
             ext = (h_target_full[..., -3:].norm(dim=-1) * target_mask_full.to(h_target_full.dtype)).amax(dim=1)
@@ -361,11 +368,16 @@ def main():
                 n_fallback_shuffled += 1
             sizematched_perm, n_identity = make_sizematched_perm(ext, device)
             n_sizematched_identity += n_identity
+            noop_perm = torch.arange(num_graphs, device=device)  # M10-2: san nhieu
 
             branch_mu_ls = {"full": (mu_full, ls_full)}
             for branch, perm in [("shuffled", shuffled_perm), ("roll1", roll1_perm),
-                                  ("shuffled_sizematched", sizematched_perm)]:
-                branch_mu_ls[branch] = run_branch(model, batch, device, perm)
+                                  ("shuffled_sizematched", sizematched_perm), ("noop", noop_perm)]:
+                branch_mu_ls[branch] = run_branch(model, batch, device, perm, seed=seed_i)
+
+            mu_noop, ls_noop = branch_mu_ls["noop"]
+            noop_diag_max_deltas.append((mu_full - mu_noop).abs().max().item())
+            noop_diag_max_deltas.append((ls_full - ls_noop).abs().max().item())
 
             for branch in branches:
                 mu, log_scale = branch_mu_ls[branch]
@@ -387,11 +399,10 @@ def main():
                 print(f"batch {i + 1}/{n_batches_target}, n_real={n_real_so_far} "
                       f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
     finally:
-        torch.randn_like = original_randn_like
         ht_hook_handle.remove()
 
     n_real_total = sum(t.shape[0] for t in ls_chunks["full"])
-    print(f"\n[*] CAU HINH LOADER (thuc dung): split={args.split}  shuffle=False  "
+    print(f"\n[*] CAU HINH LOADER (thuc dung): split={args.split}  shuffle={args.loader_shuffle}  "
           f"batch_size={args.batch_size}  n_batches={n_batches_done}  n_token_that={n_real_total}")
     print(f"[*] So lan nhanh 'shuffled' fallback sang roll1 (khong sinh duoc derangement sau 10 lan): "
           f"{n_fallback_shuffled}/{n_batches_done}")
@@ -440,33 +451,65 @@ def main():
         print(f"    mean(NLL) = {mean_nll[branch]:.4f}")
 
     print("\n" + "=" * 100)
-    print("BANG CHENH LECH R2 (DUNG): full-shuffled, full-roll1, full-sizematched "
-          "(sap giam dan theo full-shuffled)")
+    print("BANG CHENH LECH R2 (DUNG): full-shuffled, full-roll1, full-sizematched, full-noop "
+          "(sap giam dan theo full-shuffled; full-noop = SAN NHIEU, M10)")
     print("=" * 100)
+    dR2 = lambda name, branch: stats["full"][name]["r2"] - stats[branch][name]["r2"]
     diffs = []
     for name in DIM_NAMES:
-        r2_full = stats["full"][name]["r2"]
-        d_shuf = r2_full - stats["shuffled"][name]["r2"]
-        d_roll = r2_full - stats["roll1"][name]["r2"]
-        d_size = r2_full - stats["shuffled_sizematched"][name]["r2"]
-        diffs.append((name, d_shuf, d_roll, d_size))
+        d_shuf = dR2(name, "shuffled")
+        d_roll = dR2(name, "roll1")
+        d_size = dR2(name, "shuffled_sizematched")
+        d_noop = dR2(name, "noop")
+        diffs.append((name, d_shuf, d_roll, d_size, d_noop))
     diffs.sort(key=lambda x: x[1], reverse=True)
-    print(f"{'chieu':8}{'full-shuffled':>16}{'full-roll1':>14}{'full-sizematched':>20}")
-    for name, d_shuf, d_roll, d_size in diffs:
-        print(f"{name:8}{d_shuf:16.4f}{d_roll:14.4f}{d_size:20.4f}")
+    print(f"{'chieu':8}{'full-shuffled':>16}{'full-roll1':>14}{'full-sizematched':>20}{'full-noop (SAN NHIEU)':>24}")
+    for name, d_shuf, d_roll, d_size, d_noop in diffs:
+        print(f"{name:8}{d_shuf:16.4f}{d_roll:14.4f}{d_size:20.4f}{d_noop:24.4f}")
+
+    print("\n" + "=" * 100)
+    print("TIEU CHI DOC M10 (plan.md 'PLAN Rev 9', RESEARCH_CONTEXT Muc 27) -- SAN NHIEU TRUOC M7-a/M7-b")
+    print("=" * 100)
+    d_noop_by_dim = {name: dR2(name, "noop") for name in DIM_NAMES}
+    max_abs_d_noop = max(abs(v) for v in d_noop_by_dim.values())
+    noop_diag_overall_max_delta = max(noop_diag_max_deltas) if noop_diag_max_deltas else float("nan")
+    for name in DIM_NAMES:
+        print(f"    delta R2(full-noop)[{name}] = {d_noop_by_dim[name]:.4f}")
+    print(f"    delta R2(full-noop) toi da tren 7 chieu = {max_abs_d_noop:.4f}  (dieu kien 1: < 0.002 o MOI chieu)")
+    print(f"    max|delta mu|/max|delta log_scale| (full vs noop, toan bo {n_batches_done} batch) = "
+          f"{noop_diag_overall_max_delta:.3e}  (dieu kien 1: < 1e-4)")
+    m10_cond1_ok = max_abs_d_noop < 0.002 and noop_diag_overall_max_delta < 1e-4
+    if not m10_cond1_ok:
+        print("    => DIEU KIEN 1 KHONG DAT: con nguon ngau nhien chua khoa. DUNG, tim tiep, KHONG")
+        print("       doc M7-a/M7-b ben duoi (cac so van duoc in de tham khao/debug).")
+    else:
+        print("    => DIEU KIEN 1 DAT: san nhieu da triet tieu. Doc tiep M7-a/M7-b voi dieu kien 2")
+        print("       bo sung: delta R2(d,shuffled) phai > 10 x delta R2(d,noop).")
 
     print("\n" + "=" * 100)
     print("TIEU CHI DOC M7-a (plan.md 'PLAN Rev 7') -- d/theta/phi, doi chung CHINH la 'shuffled'")
     print("=" * 100)
-    dR2 = lambda name, branch: stats["full"][name]["r2"] - stats[branch][name]["r2"]
     d_d_shuf, d_theta_shuf, d_phi_shuf = dR2("d", "shuffled"), dR2("theta", "shuffled"), dR2("phi", "shuffled")
     d_d_roll, d_theta_roll, d_phi_roll = dR2("d", "roll1"), dR2("theta", "roll1"), dR2("phi", "roll1")
     print(f"    delta R2(d)     shuffled={d_d_shuf:.4f}      roll1={d_d_roll:.4f}")
     print(f"    delta R2(theta) shuffled={d_theta_shuf:.4f}      roll1={d_theta_roll:.4f}")
     print(f"    delta R2(phi)   shuffled={d_phi_shuf:.4f}      roll1={d_phi_roll:.4f}")
     same_sign_positive = d_d_roll > 0 and d_theta_roll > 0 and d_phi_roll > 0
-    if d_d_shuf > 0.10 and d_theta_shuf > 0.015 and d_phi_shuf > 0.015 and same_sign_positive:
-        print("    => XAC NHAN: hoc protein chi phoi tinh tien. Bang chung dau tien DUOC XAC NHAN cua du an.")
+
+    d_noop_d = d_noop_by_dim["d"]
+    signal_vs_noise_ratio = abs(d_d_shuf) / abs(d_noop_d) if d_noop_d != 0 else float("inf")
+    signal_vs_noise_ok = signal_vs_noise_ratio > 10
+    print(f"    (M10 dieu kien 2) delta R2(d,shuffled) / delta R2(d,noop) = {signal_vs_noise_ratio:.1f}x "
+          f"(can > 10x)")
+
+    if not m10_cond1_ok:
+        print("    => KHONG DOC: M10 dieu kien 1 chua dat (xem muc TIEU CHI DOC M10 o tren).")
+    elif d_d_shuf > 0.10 and d_theta_shuf > 0.015 and d_phi_shuf > 0.015 and same_sign_positive:
+        if not signal_vs_noise_ok:
+            print("    => KHONG KET LUAN: dat nguong M7-a nhung KHONG dat dieu kien 2 cua M10 (ty le "
+                  f"{signal_vs_noise_ratio:.1f}x <= 10x) -- tin hieu khong tach khoi san nhieu.")
+        else:
+            print("    => XAC NHAN: hoc protein chi phoi tinh tien. Bang chung dau tien DUOC XAC NHAN cua du an.")
     elif d_d_shuf < 0.05:
         print("    => BAC: hieu ung o M6 (tap train) la hien vat cua tap train, khong tong quat hoa. Doc lai.")
     else:
@@ -482,7 +525,9 @@ def main():
             flag = "  <-- VUOT 0.05, CANH BAO"
             quat_warn = True
         print(f"        delta R2({name}) = {d_q:.4f}{flag}")
-    if quat_warn:
+    if not m10_cond1_ok:
+        print("    (M10 dieu kien 1 chua dat -- KHONG ket luan tu cac so nay.)")
+    elif quat_warn:
         print("    [!!!] CO CHIEU QUATERNION VUOT 0.05 -- ket luan M6 ve quaternion (khong chi phoi)")
         print("    co the sai, phai doc lai RESEARCH_CONTEXT Muc 24-25.")
 
@@ -496,7 +541,9 @@ def main():
     print(f"    delta R2(d) shuffled_sizematched = {d_d_size:.4f}")
     print(f"    mot nua delta R2(d) shuffled      = {half:.4f}")
     print(f"    hai phan ba delta R2(d) shuffled  = {two_thirds:.4f}")
-    if d_d_size < half:
+    if not m10_cond1_ok:
+        print("    => KHONG DOC: M10 dieu kien 1 chua dat (xem muc TIEU CHI DOC M10 o tren).")
+    elif d_d_size < half:
         print("    => TUT XUONG DUOI MOT NUA: phan lon hieu ung cua d la KICH CO hoc, khong phai hinh dang.")
     elif d_d_size > two_thirds:
         print("    => GIU TREN HAI PHAN BA: mo hinh doc thong tin hoc DAC THU cua pocket, khong chi kich co.")
