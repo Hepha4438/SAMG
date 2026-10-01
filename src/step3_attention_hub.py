@@ -93,7 +93,8 @@ class MultiDifferentialCrossAttention(nn.Module):
         return self.out_proj(v_context), attn_weights
 
 if __name__ == "__main__":
-    print("[*] Testing Step 3: Multi-Differential Cross-Attention Hub with 1 Query, 1 Positive Key, 3 Negative Keys...")
+    print("[*] Testing Step 3: Multi-Differential Cross-Attention Hub with 1 Query, "
+          "3 Positive Residue Keys (1 padding) + Null-sink, 3 Negative Keys...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = 1
     seq_len = 1
@@ -123,5 +124,5 @@ if __name__ == "__main__":
     print(f"    -> Attention weights shape (batch, heads, seq, keys): {attn_weights.shape}")
     print(f"    -> Trong so tai residue padding (cot cuoi, phai ~0): "
           f"{attn_weights[0, 0, 0, -1].item():.6f}")
-    print(f"    -> Attention Weights (Head 0):\n{attn_weights[0, 0].detach().numpy()}")
+    print(f"    -> Attention Weights (Head 0):\n{attn_weights[0, 0].detach().cpu().numpy()}")
     print("    [v] Step 3 Multi-Differential Cross-Attention verification passed successfully.")
