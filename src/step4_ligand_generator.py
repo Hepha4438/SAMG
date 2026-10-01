@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 # Import Flow Module
-from step2_mdn_module import AutoregressiveFlowLayer
+from step2_mdn_module import AutoregressiveFlowLayer, DiagonalGaussianHead
 from step3_attention_hub import MultiDifferentialCrossAttention
 
 # Dẫn xuất giá trị 0.1 (không phải con số tùy ý): trên một hướng suy biến, MLE
@@ -39,7 +39,8 @@ class PositionalEncoding(nn.Module):
 
 class DualStreamLigandGenerator(nn.Module):
     # --- Đã thêm tham số shift và scale vào __init__ ---
-    def __init__(self, vocab_size, hidden_dim=256, num_heads=4, num_layers=3, shift_factors=None, scale_factors=None):
+    def __init__(self, vocab_size, hidden_dim=256, num_heads=4, num_layers=3, shift_factors=None, scale_factors=None,
+                 geo_head="diag_gauss"):
         super().__init__()
         self.hidden_dim = hidden_dim
         
@@ -59,7 +60,13 @@ class DualStreamLigandGenerator(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, vocab_size)
         )
-        self.geometric_head = AutoregressiveFlowLayer(hidden_dim=hidden_dim, out_dim=7)
+        # Co chon head doi chung: "diag_gauss" (mac dinh) vs "maf" (kien truc goc)
+        if geo_head == "diag_gauss":
+            self.geometric_head = DiagonalGaussianHead(hidden_dim=hidden_dim, out_dim=7)
+        elif geo_head == "maf":
+            self.geometric_head = AutoregressiveFlowLayer(hidden_dim=hidden_dim, out_dim=7)
+        else:
+            raise ValueError(f"geo_head không hợp lệ: {geo_head!r} (chỉ 'diag_gauss' hoặc 'maf')")
 
         # P2c: nối token_embedding của token ĐANG ĐƯỢC SINH (không phải token < t) vào
         # context của geometric head, rồi chiếu 2*hidden_dim -> hidden_dim.

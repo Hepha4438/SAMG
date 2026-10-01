@@ -229,6 +229,7 @@ class SAMGLightningModule(pl.LightningModule):
             num_heads=config.num_heads,
             shift_factors=shift_factors,
             scale_factors=scale_factors,
+            geo_head=config.get("geo_head", "diag_gauss"),
         )
         self.global_loss = GlobalLoss(
             lambda_token=config.loss_weights.token, 
@@ -377,6 +378,9 @@ if __name__ == "__main__":
         # P2b: xem docstring SAMGLightningModule.build_ligand_input. "dummy" là mặc định
         # an toàn cho tới khi test_encoder_no_ligand.py xác nhận "empty" chạy được.
         "ligand_mode": "empty",
+        # Co chon head doi chung: "diag_gauss" (Gaussian duong cheo, mac dinh) vs "maf"
+        # (AutoregressiveFlowLayer, kien truc goc). Xem step4_ligand_generator.py.
+        "geo_head": "diag_gauss",
         "protein_encoder": {
             "num_blocks": 3,
             "num_layers": 3,
