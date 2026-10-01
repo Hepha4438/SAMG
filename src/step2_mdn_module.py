@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from torch_scatter import scatter_mean
@@ -131,7 +132,94 @@ class AutoregressiveFlowLayer(nn.Module):
             # Chuẩn hóa Quaternion đã chuyển sang step4, SAU inverse-scale (chuẩn hóa
             # ở đây, trước phép affine scale/shift, sẽ bị phép affine phá vỡ chuẩn đơn vị).
             return sampled
-            
+
+
+class DiagonalGaussianHead(nn.Module):
+    """
+    Head đối chứng cho AutoregressiveFlowLayer (MAF): phân phối Gaussian đường chéo,
+    7 chiều độc lập (KHÔNG có autoregressive coupling giữa các chiều). Dùng để so sánh
+    công bằng xem MAF có thực sự cần thiết hay một Gaussian đơn giản đã đủ.
+    """
+    def __init__(self, hidden_dim, out_dim=7, log_sigma_min=-5.0, log_sigma_max=3.0):
+        super().__init__()
+        self.out_dim = out_dim
+        self.hidden_dim = hidden_dim
+        self.log_sigma_min = log_sigma_min
+        self.log_sigma_max = log_sigma_max
+
+        # GIỮ Y HỆT kiến trúc context_proj của AutoregressiveFlowLayer để so sánh công bằng
+        self.context_proj = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh()
+        )
+        self.mu_head = nn.Linear(hidden_dim, out_dim)
+        self.logsig_head = nn.Linear(hidden_dim, out_dim)
+
+        # --- Instrumentation (CÙNG chu kỳ với AutoregressiveFlowLayer, xem P1-1) ---
+        self._ls_floor = log_sigma_min
+        self._ls_sum = torch.zeros(out_dim)
+        self._pin_sum = torch.zeros(out_dim)
+        self._ls_count = 0
+        self._nll_reservoir = []
+
+    def scale_stats(self):
+        if self._ls_count == 0:
+            return None
+        mean_ls = self._ls_sum / self._ls_count
+        pinfrac = self._pin_sum / self._ls_count
+        stats = {}
+        for i, name in enumerate(DIM_NAMES):
+            stats[f"logscale_mean_{name}"] = mean_ls[i].item()
+            stats[f"pinfrac_{name}"] = pinfrac[i].item()
+        if self._nll_reservoir:
+            nll_tensor = torch.tensor(self._nll_reservoir)
+            stats["nll_median"] = nll_tensor.median().item()
+            stats["nll_p99"] = torch.quantile(nll_tensor, 0.99).item()
+        else:
+            stats["nll_median"] = None
+            stats["nll_p99"] = None
+        return stats
+
+    def reset_scale_stats(self):
+        self._ls_sum.zero_()
+        self._pin_sum.zero_()
+        self._ls_count = 0
+        self._nll_reservoir = []
+
+    def forward(self, h, target=None):
+        c = self.context_proj(h)
+        mu = self.mu_head(c)
+        log_sigma = self.logsig_head(c).clamp(self.log_sigma_min, self.log_sigma_max)
+
+        if target is not None:
+            z = (target - mu) / log_sigma.exp()
+            nll = 0.5 * z.pow(2) + log_sigma + 0.5 * math.log(2 * math.pi)
+            nll = nll.sum(-1)
+
+            if self.training:
+                with torch.no_grad():
+                    self._ls_sum += log_sigma.detach().sum(0).cpu()
+                    self._pin_sum += (log_sigma.detach() <= self._ls_floor + 1e-3).float().sum(0).cpu()
+                    self._ls_count += log_sigma.shape[0]
+
+                    nll_flat = nll.detach().flatten().cpu()
+                    n = nll_flat.numel()
+                    take = min(512, n)
+                    if take > 0:
+                        idx = torch.randperm(n)[:take]
+                        self._nll_reservoir.extend(nll_flat[idx].tolist())
+                        if len(self._nll_reservoir) > 20000:
+                            self._nll_reservoir = self._nll_reservoir[-20000:]
+
+            return nll
+        else:
+            # LUỒNG INFERENCE: KHÔNG chuẩn hóa quaternion -- step4 đã lo phần clamp
+            # d/theta, wrap phi, chuẩn hóa quaternion SAU inverse-scale.
+            return mu + log_sigma.exp() * torch.randn_like(mu)
+
 # ==============================================================================
 # SCRIPT TEST: OVERFIT ON A MOCK BATCH (AUTOREGRESSIVE FLOW)
 # ==============================================================================
