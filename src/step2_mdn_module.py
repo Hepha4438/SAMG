@@ -91,31 +91,42 @@ class AutoregressiveFlowLayer(nn.Module):
         self._ls_count = 0
         self._nll_reservoir = []
 
-    def forward(self, h, target=None):
+    def forward(self, h, target=None, pad_mask=None):
         """
         Args:
             h: [batch_size, hidden_dim] Context từ Transformer
             target: [batch_size, 7] Tọa độ thực tế (Chỉ dùng khi Training)
+            pad_mask: [batch_size] Bool/float, True/1 = token THẬT (không phải padding).
+                CHỈ dùng để lọc reservoir NLL cho đúng tổng thể với Geo_Loss_Unclamped
+                (vốn được tính SAU khi mask padding ở step5) -- không ảnh hưởng tới
+                -log_prob trả về, vẫn đủ hình dạng cho loss chính như cũ.
         """
         context = self.context_proj(h)
         batch_size = context.size(0)
-        
+
         # Mở rộng kích thước phân phối gốc khớp với batch_size để tránh lỗi broadcast của Pyro
         base_dist = dist.Normal(self.base_loc, self.base_scale).expand([batch_size, self.out_dim]).to_event(1)
-        
+
         # Ép mạng nắn phân phối dựa theo ngữ cảnh Protein hiện tại
         conditioned_transform = self.transform.condition(context)
-        
+
         # Tạo ra phân phối 3D phức tạp cuối cùng
         flow_dist = dist.TransformedDistribution(base_dist, [conditioned_transform])
-        
+
         if target is not None:
             # LUỒNG TRAINING: Tính Exact Log-Likelihood
             log_prob = flow_dist.log_prob(target)
 
             # --- P1-1: Reservoir cho NLL (median/p99 chính xác cuối epoch) ---
+            # CHỈ nạp token THẬT -- trước bản sửa này, reservoir lấy mẫu TRƯỚC khi mask
+            # padding còn Geo_Loss_Unclamped (step5) lấy SAU, nên hai đại lượng không
+            # cùng tổng thể (bằng chứng: mean < median, không thể xảy ra với phân phối
+            # có p99 lớn như đã đo).
             with torch.no_grad():
                 nll_flat = (-log_prob).detach().flatten().cpu()
+                if pad_mask is not None:
+                    valid = pad_mask.detach().to(torch.bool).flatten().cpu()
+                    nll_flat = nll_flat[valid]
                 n = nll_flat.numel()
                 take = min(512, n)
                 if take > 0:
@@ -189,7 +200,11 @@ class DiagonalGaussianHead(nn.Module):
         self._ls_count = 0
         self._nll_reservoir = []
 
-    def forward(self, h, target=None):
+    def forward(self, h, target=None, pad_mask=None):
+        """
+        pad_mask: [N] Bool/float, True/1 = token THẬT. CHỈ lọc reservoir NLL cho đúng
+        tổng thể với Geo_Loss_Unclamped (step5); không ảnh hưởng nll trả về.
+        """
         c = self.context_proj(h)
         mu = self.mu_head(c)
         log_sigma = self.logsig_head(c).clamp(self.log_sigma_min, self.log_sigma_max)
@@ -206,6 +221,9 @@ class DiagonalGaussianHead(nn.Module):
                     self._ls_count += log_sigma.shape[0]
 
                     nll_flat = nll.detach().flatten().cpu()
+                    if pad_mask is not None:
+                        valid = pad_mask.detach().to(torch.bool).flatten().cpu()
+                        nll_flat = nll_flat[valid]
                     n = nll_flat.numel()
                     take = min(512, n)
                     if take > 0:

@@ -123,7 +123,10 @@ class DualStreamLigandGenerator(nn.Module):
             noise = torch.randn_like(target_scaled) * DEQUANT_SIGMA
             target_scaled = target_scaled + noise
 
-            loss_geo_flat = self.geometric_head(geo_in_flat, target=target_scaled)
+            # Chi nap token THAT vao reservoir NLL cua geometric_head -- dong bo tong the
+            # voi Geo_Loss_Unclamped (step5), von duoc tinh SAU khi mask padding.
+            pad_mask_flat = (target_ids != 0).view(-1)
+            loss_geo_flat = self.geometric_head(geo_in_flat, target=target_scaled, pad_mask=pad_mask_flat)
             loss_geo = loss_geo_flat.view(batch_size, seq_len)
             sampled_7d = None
         else:
