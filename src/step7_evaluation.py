@@ -246,12 +246,33 @@ def main():
         return
     checkpoint_path = max(ckpt_candidates, key=os.path.getmtime)
 
+    # P3b (RESEARCH_CONTEXT 20.10): SAMGLightningModule.load_from_checkpoint() bên dưới
+    # được truyền config= TƯỜNG MINH, nên nó sẽ GHI ĐÈ lên hparams đã lưu trong checkpoint
+    # -- dù save_hyperparameters() (step6_trainer.py:208, gọi không tham số) có lưu cả
+    # config. Nếu GEO_HEAD ở đây khác với lúc train, geometric_head sẽ bị khởi tạo SAI
+    # kiến trúc và strict=False sẽ ÂM THẦM bỏ qua toàn bộ trọng số của nó (hoặc báo
+    # "unexpected keys") thay vì lỗi rõ ràng -- mọi số Vina/QED sẽ vô nghĩa mà không có
+    # cảnh báo nào. PHẢI khớp với geo_head dùng lúc train checkpoint_path ở trên.
+    GEO_HEAD = "diag_gauss"
+    try:
+        _raw_ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        _saved_cfg = _raw_ckpt.get("hyper_parameters", {}).get("config")
+        _saved_geo_head = _saved_cfg.get("geo_head", "diag_gauss") if _saved_cfg is not None else None
+        if _saved_geo_head is not None and _saved_geo_head != GEO_HEAD:
+            print(f"[!!!] CẢNH BÁO: checkpoint được train với geo_head={_saved_geo_head!r} "
+                  f"nhưng script này đang eval với geo_head={GEO_HEAD!r}. geometric_head sẽ bị "
+                  f"khởi tạo SAI kiến trúc. Sửa GEO_HEAD ở trên thành {_saved_geo_head!r} "
+                  f"TRƯỚC khi đọc bất kỳ kết quả nào.")
+    except Exception as e:
+        print(f"[!] Không đọc được hyper_parameters từ checkpoint để đối chiếu geo_head: {e}")
+
     config = OmegaConf.create({
         "hidden_dim": 256, "num_heads": 4, "lr": 1e-4,
         # P2b: PHẢI khớp với ligand_mode dùng lúc train (xem
         # SAMGLightningModule.build_ligand_input) -- lệch chế độ giữa train/eval làm
         # phân phối input của encoder khác nhau giữa hai pha.
         "ligand_mode": "empty",
+        "geo_head": GEO_HEAD,
         "protein_encoder": {
             "num_blocks": 3, "num_layers": 3, "hidden_dim": 256,
             "n_heads": 4, "knn": 16, "edge_feat_dim": 5, "num_r_gaussian": 20, "num_node_types": 8
