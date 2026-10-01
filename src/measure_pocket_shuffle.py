@@ -136,9 +136,12 @@ def make_sizematched_perm(ext, device, max_tries=10):
     return perm, n_identity
 
 
-def run_branch(model, batch, device, perm):
+def run_branch(model, batch, device, perm, debug=False):
     """Forward 1 lan voi pocket_shuffle_perm=perm (hoac None). Tra ve (mu, log_scale) tu hook
-    rieng dang ky tren arn trong luc goi nay (go ngay sau)."""
+    rieng dang ky tren arn trong luc goi nay (go ngay sau). debug=True truyen tiep
+    pocket_shuffle_debug=True vao step6 (M8) de in shape/is_contiguous() cua h_target/
+    target_mask NGAY TAI diem ap perm -- CHI dung trong run_noop_check, KHONG dung o vong
+    do chinh (se spam qua nhieu dong cho 200+ batch x 4 nhanh)."""
     captured = {}
     arn = model.generator.geometric_head.arn
     h = arn.register_forward_hook(
@@ -146,34 +149,76 @@ def run_branch(model, batch, device, perm):
     )
     try:
         with torch.no_grad():
-            model.forward(batch, pocket_shuffle_perm=perm)
+            model.forward(batch, pocket_shuffle_perm=perm, pocket_shuffle_debug=debug)
     finally:
         h.remove()
     return captured["mu"].double(), captured["log_scale"].double()
 
 
 def run_noop_check(model, loader, device, n_check=3):
-    """Kiem tra chinh xac (thay cho doi chieu Muc 24.1): forward pocket_shuffle_perm=None vs
-    torch.arange(B) tren CUNG batch phai cho mu/log_scale BIT-IDENTICAL."""
+    """
+    M8 (RESEARCH_CONTEXT 26, thay cho phep kiem torch.equal cu -- 26.2 chi ra bit-identical
+    la dieu KHONG THE dat duoc qua advanced indexing tren GPU ngay ca khi logic dung, nen
+    torch.equal khong co kha nang PASS va khong phan xu duoc gi).
+
+    forward pocket_shuffle_perm=None vs pocket_shuffle_perm=torch.arange(B) (hoan vi dong
+    nhat, ve mat toan hoc la no-op) TRONG CUNG mot batch. In max|delta mu|, max|delta
+    log_scale|, torch.allclose(atol=1e-5, rtol=1e-4) -> PASS/FAIL, VA van giu torch.equal
+    nhung doi nhan ro no KY VONG FAIL tren GPU (khong phai dau hieu loi). debug=True tren
+    ca hai lan goi de step6 in shape/is_contiguous() cua h_target/target_mask NGAY TAI diem
+    ap perm (doc cung voi max|delta| de phan xu (i) vo hai vs (ii) pha huy).
+    """
     print("\n" + "=" * 90)
-    print(f"KIEM TRA KHONG-DOI (chinh xac, TRONG cung batch): perm=None vs perm=torch.arange(B), "
-          f"{n_check} batch dau")
+    print(f"KIEM TRA KHONG-DOI (M8): perm=None vs perm=torch.arange(B), TRONG CUNG batch, "
+          f"{n_check} batch dau. pocket_shuffle_debug=True (xem cac dong [pocket_shuffle_debug]).")
     print("=" * 90)
-    all_pass = True
+    max_deltas = []
     for i, batch in enumerate(itertools.islice(loader, n_check)):
         batch = batch.to(device)
         num_graphs = batch.protein_element_batch.max().item() + 1
         identity_perm = torch.arange(num_graphs, device=device)
 
-        mu_none, ls_none = run_branch(model, batch, device, None)
-        mu_id, ls_id = run_branch(model, batch, device, identity_perm)
+        print(f"\n  --- batch {i}: perm=None ---")
+        mu_none, ls_none = run_branch(model, batch, device, None, debug=True)
+        print(f"  --- batch {i}: perm=torch.arange(B) ---")
+        mu_id, ls_id = run_branch(model, batch, device, identity_perm, debug=True)
 
-        ok = torch.equal(mu_none, mu_id) and torch.equal(ls_none, ls_id)
-        all_pass = all_pass and ok
-        print(f"    batch {i}: {'PASS' if ok else 'FAIL'}")
-    verdict = "PASS" if all_pass else "FAIL -- tham so pocket_shuffle_perm da lam doi duong chay mac dinh!"
-    print(f"    KET QUA TONG: {verdict}")
-    return all_pass
+        max_delta_mu = (mu_none - mu_id).abs().max().item()
+        max_delta_ls = (ls_none - ls_id).abs().max().item()
+        max_deltas.extend([max_delta_mu, max_delta_ls])
+
+        allclose_ok = (torch.allclose(mu_none, mu_id, atol=1e-5, rtol=1e-4)
+                       and torch.allclose(ls_none, ls_id, atol=1e-5, rtol=1e-4))
+        bitwise_equal = torch.equal(mu_none, mu_id) and torch.equal(ls_none, ls_id)
+
+        print(f"    max|delta mu|        = {max_delta_mu:.3e}")
+        print(f"    max|delta log_scale| = {max_delta_ls:.3e}")
+        print(f"    torch.allclose(atol=1e-5, rtol=1e-4): {'PASS' if allclose_ok else 'FAIL'}")
+        print(f"    bit-identical (torch.equal) (ky vong FAIL tren GPU, KHONG phai loi): "
+              f"{'PASS' if bitwise_equal else 'FAIL'}")
+
+    overall_max_delta = max(max_deltas)
+    print(f"\n  max|delta| toan bo ({n_check} batch, ca mu va log_scale) = {overall_max_delta:.3e}")
+
+    print("\n  TIEU CHI DOC (plan.md M8 -- PHAI doi chieu CA voi shape in boi cac dong "
+          "[pocket_shuffle_debug] o tren):")
+    if overall_max_delta < 1e-4:
+        print(f"    max|delta| = {overall_max_delta:.3e} < 1e-4. NEU dong [pocket_shuffle_debug]")
+        print("    o tren cho thay shape tai diem ap la 3 chieu [B, R_max, H+3]")
+        print("    => (i) VO HAI: chi la lam tron do layout bo nho. Muc 25 va M7 DUOC PHUC HOI,")
+        print("       doc binh thuong.")
+    elif overall_max_delta > 1e-2:
+        print(f"    max|delta| = {overall_max_delta:.3e} > 1e-2")
+        print("    => (ii) PHA HUY: perm dang duoc ap vao tensor sai hinh dang. Muc 25 va M7 BI")
+        print("       HUY HOAN TOAN, phai sua step6 roi chay lai M6 va M7.")
+    else:
+        print(f"    max|delta| = {overall_max_delta:.3e} o khoang trung gian (1e-4 - 1e-2)")
+        print("    => KHONG KET LUAN. Xem max|delta mu| va max|delta log_scale| rieng cho tung")
+        print("       batch o tren de truy (hai 'lop' duy nhat co the tach duoc o muc nay).")
+    print("    Bat ke max|delta| la bao nhieu: NEU dong [pocket_shuffle_debug] cho thay shape")
+    print("    KHONG phai 3 chieu => (ii) PHA HUY, ghi de len ket luan tu max|delta| o tren.")
+
+    return overall_max_delta
 
 
 def main():
