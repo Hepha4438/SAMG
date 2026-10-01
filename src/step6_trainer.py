@@ -276,7 +276,7 @@ class SAMGLightningModule(pl.LightningModule):
             raise ValueError(f"ligand_mode không hợp lệ: {ligand_mode!r} (chỉ 'empty' hoặc 'dummy')")
         return h_ligand, ligand_pos, batch_ligand
 
-    def forward(self, data_batch, pocket_shuffle_perm=None):
+    def forward(self, data_batch, pocket_shuffle_perm=None, pocket_shuffle_debug=False):
         device = data_batch.protein_pos.device
         hidden_dim = self.config.hidden_dim
 
@@ -304,9 +304,23 @@ class SAMGLightningModule(pl.LightningModule):
         # pha su ghep doi hoc<->ligand (doi chung "shuffled"). None -> KHONG doi gi, duong chay
         # y het truoc day. PHAI ap CUNG mot perm cho CA HAI -- ap rieng le se lech so residue
         # so voi mask va tao nhieu khong kiem soat.
+        # M8: pocket_shuffle_debug (mac dinh tat, no-op khi tat) -- in shape/is_contiguous() cua
+        # h_target/target_mask NGAY TAI diem ap perm, de phan xu "lam tron do layout bo nho"
+        # (vo hai) vs "perm ap sai tensor sai hinh dang" (pha huy) khi kiem khong-doi FAIL tren GPU.
+        if pocket_shuffle_debug:
+            print(f"[pocket_shuffle_debug] TRUOC khi ap perm: h_target shape={tuple(h_target.shape)} "
+                  f"is_contiguous={h_target.is_contiguous()}")
+            print(f"[pocket_shuffle_debug] TRUOC khi ap perm: target_mask shape={tuple(target_mask.shape)} "
+                  f"is_contiguous={target_mask.is_contiguous()}")
+
         if pocket_shuffle_perm is not None:
             h_target = h_target[pocket_shuffle_perm]
             target_mask = target_mask[pocket_shuffle_perm]
+            if pocket_shuffle_debug:
+                print(f"[pocket_shuffle_debug] SAU khi ap perm: h_target shape={tuple(h_target.shape)} "
+                      f"is_contiguous={h_target.is_contiguous()}")
+                print(f"[pocket_shuffle_debug] SAU khi ap perm: target_mask shape={tuple(target_mask.shape)} "
+                      f"is_contiguous={target_mask.is_contiguous()}")
 
         # h_anti_raw, _ = self.static_encoder(h_protein, data_batch.protein_pos + 1.5, torch.zeros_like(data_batch.protein_pos[:,0], dtype=torch.bool), data_batch.protein_element_batch)
         # list_h_anti = [scatter_mean(h_anti_raw, data_batch.protein_element_batch, dim=0, dim_size=num_graphs).unsqueeze(1)] 
