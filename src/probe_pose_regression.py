@@ -18,14 +18,32 @@ REV 14: HAI PHEP DO DOC LAP, chay CA HAI:
   P1 (CHINH) -- linear probe co ridge, KHONG the overfit theo kieu 31.2 vi khong co bang
     embedding tu do. Dac trung moi token = concat[mean-pool(h_target,mask) [259],
     max-pool(h_target,mask) [259], embedding CO DINH NGAU NHIEN cua frag_id (dim 32, seed
-    1234, KHONG hoc -- cho biet "fragment nao" ma KHONG cho hoc thuoc pose tung fragment),
-    one-hot vi tri t (clip t<=15) [16]]. Mot ma tran ridge cho ca 7 chieu (closed-form),
-    lambda quet tren {1e-3..1e3}, chon theo R2 trung binh 3 chieu tinh tien TREN VALID.
+    1234, KHONG hoc), one-hot vi tri t (clip t<=15) [16]]. Mot ma tran ridge cho ca 7 chieu
+    (closed-form), lambda quet tren {1e-3..1e3}, chon theo R2 trung binh 3 chieu tinh tien
+    TREN VALID.
   P2 (PHU) -- kien truc MLP y het lan 1 (cross-attention 1 lop co mask, K/V khong bias nen
     nhanh blind cho ctx=0 chinh xac), nhung CO GIAO THUC: early stopping tren valid (danh gia
     MOI epoch, patience 10, toi da 60 epoch, giu checkpoint tot nhat theo R2 trung binh 3
     chieu tinh tien), weight_decay=1e-4, bao cao R2 tai epoch TOT NHAT (khong phai epoch
     cuoi), preload toan bo cache vao RAM (tranh torch.load tung sample moi epoch, 31.5).
+
+REV 15 (plan.md "PLAN Rev 15"; RESEARCH_CONTEXT Muc 32): P2 DAT tieu chi chinh 3/3
+(delta R2 d/theta/phi = 0,0999/0,0674/0,0690), nhung P1 (phep CHINH) VOID -- loi dac ta thu
+CHIN (32.4): embedding frag_id co dinh 32 chieu lam nhanh `blind` cua P1 VE CAU TRUC khong the
+dat toi san tokenmean (19.033 id, embedding chi bieu dien duoc ham 32 chieu cua danh tinh
+fragment, con tokenmean la bang tra cuu DAY DU) -- `pocket - blind` cua P1 bi phong dai gia
+tao. SUA (chi doi dac trung cua P1, giu nguyen P2 va tieu chi doc):
+  Bo embedding ngau nhien co dinh. Thay bang TARGET ENCODING: 7 dac trung
+  `tokenmean_pose[frag_id]` = CHINH du doan cua nhanh tokenmean (trung binh 7D theo frag_id,
+  tinh tren train; frag_id la khong co trong train dung trung binh toan cuc). CHONG RO RI bat
+  buoc: voi hang TRAIN, dac trung nay PHAI tinh OUT-OF-FOLD (5 fold, seed 1234 -- xem
+  kfold_assignment/build_target_encoding_oof) vi tinh truc tiep tren toan bo train se cho dac
+  trung tu-du-doan-chinh-no (gan nhu ro ri target). Voi hang VALID, dung trung binh tren TOAN
+  BO train (khong fold, vi valid khong duoc dung de fit). Dac trung moi token gio la
+  concat[mean-pool [259], max-pool [259], tokenmean_pose[frag_id] [7], one-hot t [16]] = 541.
+  Ly do: nhanh `blind` cua P1 khi do >= tokenmean VE CAU TRUC (chi can hoc he so ~1 cho 7 dac
+  trung target-encoding) nen giao thuc #3 khong bi chan gia tao; va `pocket` duoc do TREN NEN
+  thong tin danh tinh fragment, nen confound "hoc lam proxy cho frag_id" bi triet tieu.
 
 Ca P1 va P2 deu chay BA nhanh: pocket / blind (zero hoa H+3 kenh cua h_target, giu target_mask)
 / tokenmean (khong mo hinh, trung binh 7D theo frag_id tinh tren train).
@@ -275,12 +293,101 @@ def compute_tokenmean(train_items, valid_items, batch_size, shift, scale):
 # P1 -- LINEAR PROBE CO RIDGE
 # ============================================================================================
 
-def fixed_frag_embedding(vocab_size, dim=32, seed=1234):
-    """Bang embedding CO DINH NGAU NHIEN cua frag_id -- Generator RIENG (khong dung chung RNG
-    toan cuc) de luon tai lap duoc bat ke thu tu goi truoc do. requires_grad=False (khong hoc):
-    cho biet 'fragment nao' ma KHONG cho phep hoc thuoc pose tung fragment (31.2)."""
+def fit_tokenmean(items, shift, scale):
+    """mean_by_frag[fid] (tensor[7], float64, DA CHUAN HOA) + global_mean, tinh tren TOAN BO
+    `items` da cho. Dung lam (a) chinh nhanh tokenmean (qua compute_tokenmean, KHONG doi) va
+    (b) nguon target-encoding cho P1 (Rev 15) -- CHINH la du doan cua tokenmean, nen goi lai
+    ham nay thay vi viet lai logic trung binh-theo-frag_id o noi khac."""
+    sums, counts = {}, {}
+    global_sum = torch.zeros(7, dtype=torch.float64)
+    global_n = 0
+    for h, m, t7d, tid in items:
+        target_scaled = (t7d.double() - shift) / scale
+        for fid, pose in zip(tid.tolist(), target_scaled):
+            sums[fid] = sums.get(fid, torch.zeros(7, dtype=torch.float64)) + pose
+            counts[fid] = counts.get(fid, 0) + 1
+            global_sum += pose
+            global_n += 1
+    global_mean = global_sum / max(global_n, 1)
+    mean_by_frag = {fid: sums[fid] / counts[fid] for fid in sums}
+    return mean_by_frag, global_mean
+
+
+def kfold_assignment(n, k, seed):
+    """Gan k fold cho n hang, Generator RIENG (seed co dinh, doc lap RNG toan cuc) de luon tai
+    lap duoc. Hoan vi ngau nhien roi chia vong-tron -> fold can doi."""
     g = torch.Generator().manual_seed(seed)
-    return torch.randn(vocab_size, dim, generator=g)
+    perm = torch.randperm(n, generator=g)
+    fold_of = torch.empty(n, dtype=torch.long)
+    fold_of[perm] = torch.arange(n, dtype=torch.long) % k
+    return fold_of
+
+
+def build_target_encoding_oof(train_items, shift, scale, n_folds=5, seed=1234):
+    """TARGET ENCODING OUT-OF-FOLD cho CAC HANG TRAIN (Rev 15, RESEARCH_CONTEXT 32.4): dac
+    trung tokenmean_pose[frag_id] cua token thuoc fold k CHI duoc tinh tu 4 fold con lai --
+    tinh truc tiep tren toan bo train se cho dac trung tu-du-doan-chinh-no (ro ri), lam fit
+    tren train lac quan gia tao va lech viec chon lambda. Tra ve list[Tensor[T_i,7]] CUNG THU
+    TU voi train_items (dac trung OOF cho cac token cua complex i, da chuan hoa)."""
+    token_fid_chunks, token_pose_chunks, complex_lens = [], [], []
+    for h, m, t7d, tid in train_items:
+        token_fid_chunks.append(tid)
+        token_pose_chunks.append((t7d.double() - shift) / scale)
+        complex_lens.append(tid.shape[0])
+    all_fid = torch.cat(token_fid_chunks)                 # [N]
+    all_pose = torch.cat(token_pose_chunks, dim=0)         # [N, 7]
+    N = all_fid.shape[0]
+    fold_of = kfold_assignment(N, n_folds, seed)
+
+    fold_sum_by_fid = [dict() for _ in range(n_folds)]
+    fold_count_by_fid = [dict() for _ in range(n_folds)]
+    fold_total_sum = torch.zeros(n_folds, 7, dtype=torch.float64)
+    fold_total_count = torch.zeros(n_folds, dtype=torch.float64)
+    for i in range(N):
+        k = int(fold_of[i])
+        fid = int(all_fid[i])
+        pose = all_pose[i]
+        fold_sum_by_fid[k][fid] = fold_sum_by_fid[k].get(fid, torch.zeros(7, dtype=torch.float64)) + pose
+        fold_count_by_fid[k][fid] = fold_count_by_fid[k].get(fid, 0) + 1
+        fold_total_sum[k] += pose
+        fold_total_count[k] += 1
+
+    global_sum_by_fid, global_count_by_fid = {}, {}
+    for k in range(n_folds):
+        for fid, s in fold_sum_by_fid[k].items():
+            global_sum_by_fid[fid] = global_sum_by_fid.get(fid, torch.zeros(7, dtype=torch.float64)) + s
+            global_count_by_fid[fid] = global_count_by_fid.get(fid, 0) + fold_count_by_fid[k][fid]
+    global_total_sum = fold_total_sum.sum(dim=0)
+    global_total_count = fold_total_count.sum()
+
+    feats = torch.zeros(N, 7, dtype=torch.float64)
+    for i in range(N):
+        k = int(fold_of[i])
+        fid = int(all_fid[i])
+        s_out = global_sum_by_fid.get(fid, torch.zeros(7, dtype=torch.float64)) - \
+            fold_sum_by_fid[k].get(fid, torch.zeros(7, dtype=torch.float64))
+        c_out = global_count_by_fid.get(fid, 0) - fold_count_by_fid[k].get(fid, 0)
+        if c_out > 0:
+            feats[i] = s_out / c_out
+        else:
+            oof_total_sum = global_total_sum - fold_total_sum[k]
+            oof_total_count = (global_total_count - fold_total_count[k]).clamp_min(1)
+            feats[i] = oof_total_sum / oof_total_count
+
+    out, pos = [], 0
+    for L in complex_lens:
+        out.append(feats[pos:pos + L])
+        pos += L
+    return out
+
+
+def build_target_encoding_full(items, mean_by_frag, global_mean):
+    """Target encoding cho CAC HANG VALID (Rev 15): dung TOAN BO train (khong fold) vi valid
+    khong duoc dung de fit gi ca, nen khong co nguy co ro ri. Tra ve list[Tensor[T_i,7]]."""
+    out = []
+    for h, m, t7d, tid in items:
+        out.append(torch.stack([mean_by_frag.get(fid, global_mean) for fid in tid.tolist()]))
+    return out
 
 
 def masked_mean_pool(h, mask):
@@ -296,22 +403,26 @@ def masked_max_pool(h, mask):
     return h_masked.max(dim=0).values
 
 
-def build_p1_features(items, frag_table, blind):
-    """Dac trung P1 moi token: concat[mean-pool(h,mask) [259], max-pool(h,mask) [259],
-    frag_table[frag_id] [32], one-hot(clip(t,15)) [16]]. Tra ve (X [N, 566], Y_raw [N, 7])."""
+def build_p1_features(items, target_enc_per_complex, blind):
+    """Dac trung P1 moi token (Rev 15): concat[mean-pool(h,mask) [259], max-pool(h,mask) [259],
+    tokenmean_pose[frag_id] TARGET ENCODING [7], one-hot(clip(t,15)) [16]] = 541. target_enc_
+    per_complex: list[Tensor[T_i,7]] CUNG THU TU voi `items` (OOF cho train, toan-bo-train cho
+    valid -- xem build_target_encoding_oof/build_target_encoding_full). Target encoding KHONG
+    phu thuoc `blind` (khong nam trong h_target) -- day la diem then chot: nhanh blind van GIU
+    duoc tin hieu danh tinh fragment nay, nen no co the dat toi san tokenmean VE CAU TRUC.
+    Tra ve (X [N, 541], Y_raw [N, 7])."""
     feats, poses_list = [], []
-    for h, m, t7d, tid in items:
+    for (h, m, t7d, tid), enc in zip(items, target_enc_per_complex):
         if blind:
             h = torch.zeros_like(h)
         pooled_mean = masked_mean_pool(h, m)          # [H]
         pooled_max = masked_max_pool(h, m)             # [H]
         T = tid.shape[0]
-        fe = frag_table[tid]                            # [T, 32]
         pos_clip = torch.arange(T).clamp_max(15)
         pos_oh = F.one_hot(pos_clip, num_classes=16).to(h.dtype)  # [T, 16]
         mean_b = pooled_mean.unsqueeze(0).expand(T, -1)
         max_b = pooled_max.unsqueeze(0).expand(T, -1)
-        feats.append(torch.cat([mean_b, max_b, fe, pos_oh], dim=-1))
+        feats.append(torch.cat([mean_b, max_b, enc.to(h.dtype), pos_oh], dim=-1))
         poses_list.append(t7d)
     return torch.cat(feats, dim=0), torch.cat(poses_list, dim=0)
 
@@ -333,12 +444,15 @@ def ridge_predict(W, X):
     return X_aug @ W
 
 
-def run_p1_branch(name, train_items, valid_items, frag_table, shift, scale, blind, lambdas):
+def run_p1_branch(name, train_items, valid_items, train_target_enc, valid_target_enc,
+                   shift, scale, blind, lambdas):
     """P1 cho MOT nhanh (pocket hoac blind): xay dac trung (double), quet lambda tren VALID
-    theo R2 trung binh 3 chieu tinh tien, chon lambda tot nhat, tra R2 train/valid tai do."""
+    theo R2 trung binh 3 chieu tinh tien, chon lambda tot nhat, tra R2 train/valid tai do.
+    train_target_enc/valid_target_enc: target encoding da tinh SAN (OOF cho train, toan-bo-
+    train cho valid) -- GIONG NHAU cho ca nhanh pocket va blind, vi no khong phu thuoc h_target."""
     print(f"\n[*] --- P1 (ridge) nhanh '{name}' (blind={blind}) ---")
-    X_train, Y_train_raw = build_p1_features(train_items, frag_table, blind)
-    X_valid, Y_valid_raw = build_p1_features(valid_items, frag_table, blind)
+    X_train, Y_train_raw = build_p1_features(train_items, train_target_enc, blind)
+    X_valid, Y_valid_raw = build_p1_features(valid_items, valid_target_enc, blind)
     X_train, X_valid = X_train.double(), X_valid.double()
     Y_train = ((Y_train_raw.double() - shift) / scale)
     Y_valid = ((Y_valid_raw.double() - shift) / scale)
@@ -677,16 +791,25 @@ def main():
 
     # ------------------------------------------------------------------------- P1 ------------
     print("\n" + "=" * 90)
-    print("P1 (CHINH): LINEAR PROBE CO RIDGE")
+    print("P1 (CHINH): LINEAR PROBE CO RIDGE -- dac trung TARGET ENCODING (Rev 15)")
     print("=" * 90)
-    frag_table = fixed_frag_embedding(vocab_size, dim=32, seed=SEED)
+    # Rev 15 (RESEARCH_CONTEXT 32.4): bo embedding ngau nhien co dinh 32 chieu (lam nhanh blind
+    # bi phong dai gia tao, vi VE CAU TRUC khong dat toi san tokenmean). Thay bang target
+    # encoding = CHINH du doan cua tokenmean; OOF (5 fold, seed 1234) cho hang TRAIN de chong
+    # ro ri tu-du-doan-chinh-no; toan-bo-train (khong fold) cho hang VALID.
+    mean_by_frag, global_mean = fit_tokenmean(train_items, shift_cpu, scale_cpu)
+    print("[*] --- P1: dang tinh target encoding OOF cho train (5 fold, seed 1234) ---")
+    train_target_enc = build_target_encoding_oof(train_items, shift_cpu, scale_cpu, n_folds=5, seed=SEED)
+    valid_target_enc = build_target_encoding_full(valid_items, mean_by_frag, global_mean)
     lambdas = [1e-3, 1e-2, 1e-1, 1, 10, 100, 1e3]
 
     p1_lam_pocket, p1_r2_train_pocket, p1_r2_valid_pocket, p1_n_train, p1_n_valid = run_p1_branch(
-        "pocket", train_items, valid_items, frag_table, shift_cpu, scale_cpu, blind=False, lambdas=lambdas
+        "pocket", train_items, valid_items, train_target_enc, valid_target_enc,
+        shift_cpu, scale_cpu, blind=False, lambdas=lambdas
     )
     p1_lam_blind, p1_r2_train_blind, p1_r2_valid_blind, _, _ = run_p1_branch(
-        "blind", train_items, valid_items, frag_table, shift_cpu, scale_cpu, blind=True, lambdas=lambdas
+        "blind", train_items, valid_items, train_target_enc, valid_target_enc,
+        shift_cpu, scale_cpu, blind=True, lambdas=lambdas
     )
 
     print_r2_table("P1 -- BANG R2 TREN VALID (7 chieu x 3 nhanh)",
@@ -701,6 +824,13 @@ def main():
     p1_label = None
     if p1_blind_ok:
         p1_label, p1_d_by_dim = classify_main_criterion("P1", p1_r2_valid_pocket, p1_r2_valid_blind)
+        d_qz_p1 = p1_d_by_dim["qz"]
+        print(f"\n  [P1] delta R2(qz) = {d_qz_p1:.4f}  (doi chieu RESEARCH_CONTEXT 32.5: nguong >= 0,05)")
+        if d_qz_p1 >= 0.05:
+            print("      => VUOT/BANG 0,05: mo lai Muc 16.1 nghiem tuc (phep quay co the bi chi "
+                  "phoi boi hoc), ghi thanh muc rieng.")
+        else:
+            print("      => DUOI 0,05: Muc 32.5 dong lai, phep quay van la 'khong chi phoi boi hoc'.")
 
     # ------------------------------------------------------------------------- P2 ------------
     print("\n" + "=" * 90)
