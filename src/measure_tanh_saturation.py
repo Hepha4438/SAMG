@@ -1,28 +1,42 @@
 """
-measure_tanh_saturation.py -- M2 (plan.md "PLAN Rev 5"): do bao hoa nn.Tanh() cuoi
-context_proj. KHONG train, chi 1 batch.
+measure_tanh_saturation.py -- M12-b (plan.md "PLAN Rev 16"; RESEARCH_CONTEXT Muc 33): do bao
+hoa cua nn.Tanh() cuoi context_proj -- nghi pham #1 cho cau hoi "neu thong tin ve tu the CO
+SAN trong dau ra encoder dong bang (M11-a Rev 3, 33.1), tai sao pipeline day du khai thac KEM
+HON mot linear probe/MLP 2 lop tren chinh dau ra do?" (Muc 20.8, nay len uu tien sau khi M11-a
+xac nhan tien de).
 
-Muc dich (RESEARCH_CONTEXT Muc 20.8): CA HAI head (AutoregressiveFlowLayer va
-DiagonalGaussianHead) ket thuc context_proj bang nn.Tanh(). Neu pre-activation lon,
-Tanh bao hoa, gradient qua no -> 0, va encoder khong nhan duoc tin hieu hoc tu dau hinh
-hoc -- mot giai thich kha di cho "5/7 chieu khong hoc gi" (Muc 20.4), HOAN TOAN DOC LAP
-voi cau hoi MAF-vs-diagonal (ca hai head dung chung kien truc nay nen phep so sanh
-diag-vs-MAF khong the phat hien no).
+context_proj (step2_mdn_module.py, dung chung cho AutoregressiveFlowLayer va DiagonalGaussian
+Head) = nn.Sequential(Linear, LayerNorm, SiLU, Linear, Tanh). Neu Tanh() bao hoa (|out| gan 1
+tren phan lon phan tu) thi dao ham cuc nho tai do (d/dx tanh(x) = 1-tanh(x)^2 -> 0), nghen
+duong gradient tu Geo_Loss chay nguoc vao h_target/encoder -- du thong tin CO trong h_target,
+pipeline khong hoc duoc cach dung no vi gradient khong toi duoc.
 
-LUU Y VE PHEP DO GRADIENT TAI ENCODER: SAMGLightningModule.forward() hien dang
-.detach() v_context TRUOC khi noi vao geo_in (C4 trong plan.md CHUA lam). Vi vay grad
-tai lop cuoi cua dynamic_encoder sau backward() tren Geo_Loss duoc KY VONG BANG 0 mot
-cach CAU TRUC (vi detach, khong lien quan Tanh) -- script nay do de XAC NHAN dieu do,
-khong phai di tim bang chung Tanh la nguyen nhan chan dau o day.
+Checkpoint periodic-epoch=024.ckpt, geo_head="maf" (AutoregressiveFlowLayer, context_proj
+giong het DiagonalGaussianHead -- do mot trong hai dai dien cho ca hai), MOT batch valid.
 
-P3b: truyen geo_head="maf" TUONG MINH khi load checkpoint (KHONG dua vao mac dinh cua
-save_hyperparameters(), vi RESEARCH_CONTEXT 20.10 chi ra chua kiem duoc config co duoc
-luu trong hparams hay khong -- neu khong, load mac dinh "diag_gauss" se nap SAI
-state_dict cho checkpoint MAF).
+HAI PHAN TACH BACH:
+  1. THONG KE (forward-only, torch.no_grad()): hook tren context_proj[3] (Linear ngay TRUOC
+     Tanh, bat pre-activation) va context_proj[-1] (chinh Tanh, bat tanh_out).
+  2. GRADIENT (mot backward() RIENG, KHONG no_grad, requires_grad=True binh thuong -- KHAC
+     cac script M truoc, vi cac script do chi forward-only nen requires_grad_(False)): forward
+     lai (sach, khong hook can thiet vi doc truc tiep .grad sau backward), goi
+     loss_dict["loss_geo"].backward(), roi doc grad.norm() tai:
+       - context_proj[0].weight, context_proj[3].weight (hai Linear cua context_proj)
+       - lop cuoi cua dynamic_encoder ma THUC SU quyet dinh gia tri residue_h/h_target --
+         AttentionLayerO2TwoUpdateNodeGeneral.x2h_layers (num_x2h=1) CUA base_block[-1] (lop
+         CUOI trong ModuleList shared-block cua UniTransformer; h2x_layers chi cap nhat toa do,
+         KHONG anh huong h_all -> residue_h, nen khong tinh vao day). Bao cao norm TONG HOP
+         (L2 tren tat ca grad cua MOI tham so trong module nay), vi khong co MOT tham so don le
+         dai dien "lop cuoi" ro rang hon trong kien truc GVP/attention nay.
+
+TIEU CHI DOC (ghi cung TRUOC khi chay, plan.md Rev 16):
+    ty le |tanh_out| > 0,99  VUOT 30%  => Tanh la NGHEN THAT, phai bo TRUOC moi so sanh head.
+    ty le |tanh_out| > 0,99  DUOI 5%   => LOAI gia thuyet 20.8, chuyen sang nghi pham #2
+                                          (v_context.detach()).
+    Trung gian => bao cao, KHONG ket luan.
 
 Cach chay:
-    python src/measure_tanh_saturation.py [--ckpt DUONG_DAN.ckpt]
-Mac dinh --ckpt la file .ckpt moi sua doi gan nhat trong saved_checkpoints_flow/.
+    python -u src/measure_tanh_saturation.py [--ckpt PATH] [--batch-size N] [--split valid]
 """
 import os
 import sys
@@ -37,8 +51,10 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
+SEED = 1234
 
-def print_git_head():
+
+def print_header(device):
     samg_root = os.path.dirname(CURRENT_DIR)
     try:
         head = subprocess.check_output(
@@ -47,32 +63,34 @@ def print_git_head():
     except Exception as e:
         head = f"KHONG LAY DUOC ({e})"
     print(f"git rev-parse HEAD: {head}")
+    print(f"SEED: {SEED}")
+    print(f"device: {device}")
 
 
-def find_latest_ckpt(samg_root):
+def default_ckpt(samg_root):
+    preferred = os.path.join(samg_root, "saved_checkpoints_flow", "periodic-epoch=024.ckpt")
+    if os.path.exists(preferred):
+        return preferred
     ckpts = glob.glob(os.path.join(samg_root, "saved_checkpoints_flow", "*.ckpt"))
-    if not ckpts:
-        return None
-    return max(ckpts, key=os.path.getmtime)
-
-
-def grad_norm(param):
-    return param.grad.norm().item() if param.grad is not None else None
+    return max(ckpts, key=os.path.getmtime) if ckpts else None
 
 
 def main():
-    print_git_head()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print_header(device)
+    torch.manual_seed(SEED)
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=None,
-                     help="Duong dan checkpoint MAF 25-epoch. Mac dinh: .ckpt moi nhat trong saved_checkpoints_flow/")
-    ap.add_argument("--batch-size", type=int, default=4)
+                     help="Mac dinh: saved_checkpoints_flow/periodic-epoch=024.ckpt")
+    ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--split", choices=["train", "valid", "test"], default="valid")
     args = ap.parse_args()
 
     import step6_trainer as st
     from omegaconf import OmegaConf
 
-    ckpt_path = args.ckpt or find_latest_ckpt(st.SAMG_ROOT)
+    ckpt_path = args.ckpt or default_ckpt(st.SAMG_ROOT)
     if ckpt_path is None:
         raise SystemExit("[!] Khong tim thay checkpoint nao trong saved_checkpoints_flow/. Truyen --ckpt.")
     print(f"[*] Checkpoint: {ckpt_path}")
@@ -90,7 +108,7 @@ def main():
     else:
         shift_factors, scale_factors, pos_scale = None, None, None
 
-    # P3b: geo_head tuong minh "maf" -- xem docstring o dau file.
+    # Checkpoint nay la MAF (geo_head tuong minh -- giong het cac script M truoc).
     config = OmegaConf.create({
         "hidden_dim": 256, "num_heads": 4, "lr": 1e-4,
         "ligand_mode": "empty", "geo_head": "maf",
@@ -102,78 +120,125 @@ def main():
     })
 
     model = st.SAMGLightningModule.load_from_checkpoint(
-        ckpt_path, map_location="cpu", config=config, vocab_size=len(vocab),
+        ckpt_path, map_location=device, config=config, vocab_size=len(vocab),
         shift_factors=shift_factors, scale_factors=scale_factors, strict=False,
     )
-    # train() de co BatchNorm/Dropout dung che do luc train va de .backward() co y nghia;
-    # KHONG goi optimizer.step() nen trong so khong doi -- day van la "khong train".
-    model.train()
+    model.to(device)
+    model.eval()
+    # KHONG requires_grad_(False): can gradient that cho PHAN GRADIENT ben duoi.
 
-    train_dataset = st.SAMGOptimizedDataset(
-        st.DATASET_DIR, st.PROCESSED_DIR, vocab, st.SPLIT_FILE, split_mode="train", pos_scale=pos_scale
+    dataset = st.SAMGOptimizedDataset(
+        st.DATASET_DIR, st.PROCESSED_DIR, vocab, st.SPLIT_FILE, split_mode=args.split, pos_scale=pos_scale
     )
     from datasets.pl_data import ProteinLigandDataLoader
-    loader = ProteinLigandDataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    batch = next(iter(loader))
+    loader = ProteinLigandDataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    print(f"\n[*] CAU HINH LOADER: split={args.split}  shuffle=False  batch_size={args.batch_size}  "
+          f"n_batches=1 (chi lay batch dau)")
+
+    batch = next(iter(loader)).to(device)
+    print(f"[*] Da lay 1 batch valid: num_graphs="
+          f"{batch.protein_element_batch.max().item() + 1}")
 
     context_proj = model.generator.geometric_head.context_proj
-    linear0 = context_proj[0]
-    linear3 = context_proj[3]
-    tanh_layer = context_proj[4]
+    print(f"[*] context_proj = {context_proj}")
+
+    # =========================================================================================
+    # PHAN 1 -- THONG KE (forward-only, no_grad)
+    # =========================================================================================
+    print("\n" + "=" * 90)
+    print("PHAN 1: THONG KE BAO HOA TANH (forward-only, torch.no_grad())")
+    print("=" * 90)
 
     captured = {}
-    h1 = linear3.register_forward_hook(lambda m, i, o: captured.__setitem__("pre_tanh", o.detach()))
-    h2 = tanh_layer.register_forward_hook(lambda m, i, o: captured.__setitem__("tanh_out", o.detach()))
 
-    total_loss, loss_dict = model.forward(batch)
+    def _pre_act_hook(module, inp, out):
+        captured["pre_act"] = out.detach().clone()
 
-    h1.remove()
-    h2.remove()
+    def _tanh_out_hook(module, inp, out):
+        captured["tanh_out"] = out.detach().clone()
 
+    h_pre = context_proj[3].register_forward_hook(_pre_act_hook)
+    h_tanh = context_proj[-1].register_forward_hook(_tanh_out_hook)
+    try:
+        with torch.no_grad():
+            model.forward(batch)
+    finally:
+        h_pre.remove()
+        h_tanh.remove()
+
+    pre_act = captured["pre_act"]
     tanh_out = captured["tanh_out"]
-    pre_act = captured["pre_tanh"]
+    print(f"[*] pre_act shape={tuple(pre_act.shape)}  tanh_out shape={tuple(tanh_out.shape)}")
 
-    frac_99 = (tanh_out.abs() > 0.99).float().mean().item()
-    frac_999 = (tanh_out.abs() > 0.999).float().mean().item()
+    n_total = tanh_out.numel()
+    frac_099 = (tanh_out.abs() > 0.99).float().mean().item()
+    frac_0999 = (tanh_out.abs() > 0.999).float().mean().item()
+    print(f"    ty le |tanh_out| > 0,99  = {frac_099:.4f}  ({frac_099 * 100:.2f}%)  "
+          f"tren {n_total} phan tu")
+    print(f"    ty le |tanh_out| > 0,999 = {frac_0999:.4f}  ({frac_0999 * 100:.2f}%)")
 
-    print("\n" + "=" * 78)
-    print("DO BAO HOA TANH (context_proj[4], dau ra cuoi cung cua context_proj)")
-    print("=" * 78)
-    print(f"    so phan tu: {tanh_out.numel()}")
-    print(f"    ty le |tanh_out| > 0.99 : {frac_99 * 100:.2f}%")
-    print(f"    ty le |tanh_out| > 0.999: {frac_999 * 100:.2f}%")
-    print(f"    pre-activation (context_proj[3] output, truoc Tanh):")
-    print(f"        mean(|x|)={pre_act.abs().mean().item():.4f}  "
-          f"std={pre_act.std().item():.4f}  max(|x|)={pre_act.abs().max().item():.4f}")
+    pre_abs = pre_act.abs()
+    print(f"    pre-activation (Linear ngay truoc Tanh, context_proj[3]):")
+    print(f"        mean(|pre-activation|) = {pre_abs.mean().item():.4f}")
+    print(f"        std(|pre-activation|)  = {pre_abs.std().item():.4f}")
+    print(f"        max(|pre-activation|)  = {pre_abs.max().item():.4f}")
 
-    print("\n" + "=" * 78)
-    print("GRADIENT SAU backward() TREN Geo_Loss (loss_dict['loss_geo'])")
-    print("=" * 78)
+    # =========================================================================================
+    # PHAN 2 -- GRADIENT (mot backward() RIENG tren Geo_Loss)
+    # =========================================================================================
+    print("\n" + "=" * 90)
+    print("PHAN 2: GRADIENT (mot backward() RIENG tren Geo_Loss, KHONG no_grad)")
+    print("=" * 90)
     model.zero_grad(set_to_none=True)
-    loss_dict["loss_geo"].backward()
+    total_loss, loss_dict = model.forward(batch)
+    geo_loss = loss_dict["loss_geo"]
+    print(f"[*] Geo_Loss (loss_dict['loss_geo']) = {geo_loss.item():.6f}")
+    geo_loss.backward()
 
-    g0 = grad_norm(linear0.weight)
-    g3 = grad_norm(linear3.weight)
-    encoder_last_layer = model.dynamic_encoder.res_inference[-1].weight
-    g_enc = grad_norm(encoder_last_layer)
+    def grad_norm_of(name, tensor):
+        if tensor.grad is None:
+            print(f"    grad.norm({name}) = KHONG CO GRAD (None) -- Geo_Loss khong chay qua day")
+            return None
+        gn = tensor.grad.norm().item()
+        print(f"    grad.norm({name}) = {gn:.6e}")
+        return gn
 
-    print(f"    context_proj[0].weight.grad.norm() = {g0}")
-    print(f"    context_proj[3].weight.grad.norm() = {g3}")
-    print(f"    dynamic_encoder.res_inference[-1].weight.grad.norm() = {g_enc}")
-    print("    LUU Y: grad tai encoder duoc KY VONG = 0 vi v_context.detach() trong")
-    print("    generator.forward() (C4 chua lam) -- 0 o day la do THIET KE, KHONG phai")
-    print("    bang chung ve Tanh bao hoa chan dau tin hieu.")
+    print("[*] grad.norm() tai cac vi tri chi dinh (plan.md Rev 16):")
+    gn_w0 = grad_norm_of("context_proj[0].weight", context_proj[0].weight)
+    gn_w3 = grad_norm_of("context_proj[3].weight", context_proj[3].weight)
 
-    print("\n" + "=" * 78)
-    print("TIEU CHI (plan.md M2): |tanh_out| > 0.99 VUOT 30% phan tu => Tanh la nghen that,")
-    print("phai bo (thay LayerNorm hoac khong gi) TRUOC khi chay bat ky so sanh head nao.")
-    print("Duoi 5% => loai gia thuyet nay, khong sua.")
-    if frac_99 > 0.30:
-        print(f"    => XAC NHAN NGHEN: {frac_99 * 100:.2f}% > 30%.")
-    elif frac_99 < 0.05:
-        print(f"    => LOAI GIA THUYET: {frac_99 * 100:.2f}% < 5%.")
+    # "Lop cuoi cua dynamic_encoder": AttentionLayerO2TwoUpdateNodeGeneral.x2h_layers cua
+    # base_block[-1] (lop CUOI trong ModuleList shared-block) -- day la lop THUC SU quyet dinh
+    # gia tri h_all -> residue_h (h2x_layers chi cap nhat toa do x, khong anh huong h_all).
+    last_block = model.dynamic_encoder.transformer.base_block[-1]
+    last_layer = last_block.x2h_layers[-1]
+    grads = [p.grad.flatten() for p in last_layer.parameters() if p.grad is not None]
+    if grads:
+        gn_encoder = torch.cat(grads).norm().item()
+        print(f"    grad.norm(dynamic_encoder.transformer.base_block[-1].x2h_layers[-1], "
+              f"TONG HOP tat ca tham so) = {gn_encoder:.6e}")
     else:
-        print(f"    => VUNG XAM ({frac_99 * 100:.2f}%, giua 5% va 30%) -- can xem xet them.")
+        gn_encoder = None
+        print("    grad.norm(dynamic_encoder lop cuoi) = KHONG CO GRAD (None) -- Geo_Loss khong "
+              "chay nguoc toi encoder")
+
+    # =========================================================================================
+    # TIEU CHI DOC (plan.md Rev 16)
+    # =========================================================================================
+    print("\n" + "=" * 90)
+    print("TIEU CHI DOC M12-b (plan.md 'PLAN Rev 16')")
+    print("=" * 90)
+    print(f"    ty le |tanh_out| > 0,99 = {frac_099 * 100:.2f}%")
+    if frac_099 > 0.30:
+        print("    => VUOT 30%: Tanh la NGHEN THAT. Phai bo context_proj's Tanh (hoac thay the) "
+              "TRUOC moi so sanh head nao -- bat ky so sanh pocket/blind/MAF/head khac deu "
+              "khong dang tin neu con nghen nay.")
+    elif frac_099 < 0.05:
+        print("    => DUOI 5%: LOAI gia thuyet 20.8 (Tanh KHONG la nguyen nhan). Chuyen sang "
+              "nghi pham #2: v_context.detach() (kiem gradient hinh hoc co chay nguoc vao "
+              "attention hub / encoder hay khong).")
+    else:
+        print("    => TRUNG GIAN (5%-30%): bao cao, KHONG ket luan.")
 
 
 if __name__ == "__main__":
