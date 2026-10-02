@@ -45,8 +45,24 @@ tao. SUA (chi doi dac trung cua P1, giu nguyen P2 va tieu chi doc):
   trung target-encoding) nen giao thuc #3 khong bi chan gia tao; va `pocket` duoc do TREN NEN
   thong tin danh tinh fragment, nen confound "hoc lam proxy cho frag_id" bi triet tieu.
 
-Ca P1 va P2 deu chay BA nhanh: pocket / blind (zero hoa H+3 kenh cua h_target, giu target_mask)
-/ tokenmean (khong mo hinh, trung binh 7D theo frag_id tinh tren train).
+REV 16 (plan.md "PLAN Rev 16"; RESEARCH_CONTEXT Muc 33, M12-a): ca hai giao thuc (P1 da sua,
+P2) XAC NHAN tien de (33.1), nhung ket luan phu "pipeline dang lam mat tin hieu" (vi delta
+R2(d) > 0,081 cua M10) CHUA co can cu (33.5) -- M10 va M11 do HAI DAI LUONG KHAC NHAU: M10 xao
+tron luc SUY LUAN tren mot mo hinh DA huan luyen ("ham da hoc DUNG hoc bao nhieu"), con M11 so
+"co hoc vs khong hoc" luc HUAN LUYEN ("co hoc thi DUOC THEM bao nhieu") -- dai luong thu hai LON
+HON dai luong thu nhat MOT CACH HE THONG du khong co gi "bi mat". SUA: them nhanh thu tu
+`pocket_shuf_eval` cho CA P1 va P2 -- dung DUNG model `pocket` DA HUAN LUYEN (P1: ma tran
+ridge da fit; P2: checkpoint tai best_epoch), KHONG huan luyen lai gi, nhung khi DANH GIA tren
+valid thi xao tron h_target theo chieu COMPLEX (derangement, seed 1234, xem
+build_complex_shuffled_items/make_derangement_indices), target_mask xao tron CUNG hoan vi.
+`R2(pocket) - R2(pocket_shuf_eval)` moi la dai luong CUNG LOAI voi M10, so duoc truc tiep voi
+nguong 0,081. Bao cao canh nhau cot A (`R2(pocket)-R2(blind)`, train-ablation) va cot B
+(`R2(pocket)-R2(pocket_shuf_eval)`, inference-shuffle) cho ca 7 chieu; nguong 0,081 CHI ap cho
+cot B.
+
+Ca P1 va P2 deu chay BON nhanh: pocket / blind (zero hoa H+3 kenh cua h_target, giu target_mask)
+/ tokenmean (khong mo hinh, trung binh 7D theo frag_id tinh tren train) / pocket_shuf_eval
+(model pocket da huan luyen, h_target xao tron theo complex CHI luc danh gia -- M12-a, Rev 16).
 
 GUARD "R2(d)<0,30 thi dung" cua Rev 11 DA HUY tu Rev 12, KHONG dung lai (pipeline co context
 tu hoi quy, M11 thi khong, nen R2 thap hon 0,418 la hop le). THAY bang KIEM GIAO THUC, doc
@@ -472,7 +488,75 @@ def run_p1_branch(name, train_items, valid_items, train_target_enc, valid_target
     pred_train = ridge_predict(best_W, X_train)
     r2_train = compute_r2(pred_train, Y_train)
     print(f"    => lambda DA CHON = {best_lam:g} (R2 trung binh tinh tien tren valid = {best_mean_trans:.4f})")
-    return best_lam, r2_train, best_r2_valid, X_train.shape[0], X_valid.shape[0]
+    return best_lam, r2_train, best_r2_valid, X_train.shape[0], X_valid.shape[0], best_W
+
+
+def make_derangement_indices(n, seed):
+    """Derangement (khong diem bat dong) cua n phan tu -- Generator RIENG (seed co dinh, doc
+    lap RNG toan cuc) de luon tai lap duoc. M12-a (plan.md Rev 16)."""
+    g = torch.Generator().manual_seed(seed)
+    idx = torch.arange(n)
+    for _ in range(10):
+        perm = torch.randperm(n, generator=g)
+        if not bool((perm == idx).any()):
+            return perm
+    return torch.roll(idx, 1)
+
+
+def build_complex_shuffled_items(items, seed=SEED):
+    """M12-a (plan.md Rev 16, RESEARCH_CONTEXT 33.5): hoan vi h_target/target_mask theo chieu
+    COMPLEX (derangement, seed co dinh), GIU target_7d/target_ids tai vi tri goc -- dung CHO
+    CA P1 va P2 de danh gia model `pocket` DA HUAN LUYEN tren pocket bi xao tron CHI luc SUY
+    LUAN (khong huan luyen lai gi). Tra ve list CUNG DO DAI, vi tri i mang (h,m) cua complex
+    perm[i] nhung (t7d,tid) cua CHINH complex i."""
+    n = len(items)
+    perm = make_derangement_indices(n, seed)
+    return [(items[int(perm[i])][0], items[int(perm[i])][1], items[i][2], items[i][3])
+            for i in range(n)]
+
+
+def eval_p1_pocket_shuf(best_W, valid_items_shuf, valid_target_enc, shift, scale):
+    """M12-a cho P1: ap DUNG ma tran ridge best_W DA FIT (khong refit) tren dac trung xay tu
+    valid_items_shuf (h_target/mask da xao tron theo complex, target-encoding/vi-tri GIU
+    NGUYEN vi khong phu thuoc h_target va khong doi theo hoan vi nay)."""
+    X_shuf, Y_raw = build_p1_features(valid_items_shuf, valid_target_enc, blind=False)
+    X_shuf = X_shuf.double()
+    Y_shuf = (Y_raw.double() - shift) / scale
+    pred_shuf = ridge_predict(best_W, X_shuf)
+    return compute_r2(pred_shuf, Y_shuf)
+
+
+def print_AB_table(probe_name, r2_pocket, r2_blind, r2_pocket_shuf):
+    """M12-a: bang canh nhau cot A = R2(pocket)-R2(blind) [train-ablation], cot B =
+    R2(pocket)-R2(pocket_shuf_eval) [inference-shuffle] -- cung loai voi M10. Tra ve B_by_dim."""
+    print(f"\n  [{probe_name}] BANG CANH NHAU (M12-a): cot A = R2(pocket)-R2(blind) "
+          f"[train-ablation]  |  cot B = R2(pocket)-R2(pocket_shuf_eval) [inference-shuffle, "
+          f"CUNG LOAI voi M10]")
+    print(f"      {'chieu':8}{'A (train-ablation)':>22}{'B (inference-shuffle)':>24}")
+    B_by_dim = {}
+    for i, name in enumerate(DIM_NAMES):
+        A = r2_pocket[i] - r2_blind[i]
+        B = r2_pocket[i] - r2_pocket_shuf[i]
+        B_by_dim[name] = B
+        print(f"      {name:8}{A:22.4f}{B:24.4f}")
+    return B_by_dim
+
+
+def classify_m12a_criterion(probe_name, B_by_dim):
+    """Tieu chi doc M12-a (plan.md Rev 16), ap nguong 0,081 (M10) CHO COT B, KHONG cho cot A."""
+    B_d = B_by_dim["d"]
+    print(f"\n  [{probe_name}] TIEU CHI M12-a: B(d) = R2(pocket)-R2(pocket_shuf_eval) tai d, "
+          f"doi chieu nguong 0,081 (M10) -- CHI ap cho cot B")
+    print(f"      B(d) = {B_d:.4f}")
+    if B_d > 0.081:
+        print(f"      [{probe_name}] => XAC NHAN: pipeline khai thac KEM HON probe, CUNG "
+              f"estimator -- so sanh hop le. Di theo huong 'tim cho pipeline lam mat tin hieu'.")
+        return "XAC_NHAN"
+    else:
+        print(f"      [{probe_name}] => BAC: ket luan 32.3/33.5 ('pipeline lam mat tin hieu') "
+              f"KHONG co can cu. Chenh lech o Muc 32-33 chi la hieu ung doi estimator. Huong di "
+              f"KHONG phai sua generator, phai thiet ke lai buoc tiep.")
+        return "BAC"
 
 
 # ============================================================================================
@@ -801,13 +885,14 @@ def main():
     print("[*] --- P1: dang tinh target encoding OOF cho train (5 fold, seed 1234) ---")
     train_target_enc = build_target_encoding_oof(train_items, shift_cpu, scale_cpu, n_folds=5, seed=SEED)
     valid_target_enc = build_target_encoding_full(valid_items, mean_by_frag, global_mean)
-    lambdas = [1e-3, 1e-2, 1e-1, 1, 10, 100, 1e3]
+    # M12-a (plan.md Rev 16, 33.3): them 1e4, 1e5 -- blind dang chon 1000 = bien tren cua day cu.
+    lambdas = [1e-3, 1e-2, 1e-1, 1, 10, 100, 1e3, 1e4, 1e5]
 
-    p1_lam_pocket, p1_r2_train_pocket, p1_r2_valid_pocket, p1_n_train, p1_n_valid = run_p1_branch(
+    p1_lam_pocket, p1_r2_train_pocket, p1_r2_valid_pocket, p1_n_train, p1_n_valid, p1_W_pocket = run_p1_branch(
         "pocket", train_items, valid_items, train_target_enc, valid_target_enc,
         shift_cpu, scale_cpu, blind=False, lambdas=lambdas
     )
-    p1_lam_blind, p1_r2_train_blind, p1_r2_valid_blind, _, _ = run_p1_branch(
+    p1_lam_blind, p1_r2_train_blind, p1_r2_valid_blind, _, _, _ = run_p1_branch(
         "blind", train_items, valid_items, train_target_enc, valid_target_enc,
         shift_cpu, scale_cpu, blind=True, lambdas=lambdas
     )
@@ -831,6 +916,20 @@ def main():
                   "phoi boi hoc), ghi thanh muc rieng.")
         else:
             print("      => DUOI 0,05: Muc 32.5 dong lai, phep quay van la 'khong chi phoi boi hoc'.")
+
+    # --- M12-a (plan.md Rev 16): nhanh thu tu pocket_shuf_eval, DUNG model pocket DA FIT ------
+    print("\n" + "=" * 90)
+    print("M12-a (P1): pocket_shuf_eval -- model pocket DA FIT, h_target xao tron theo complex "
+          "CHI luc danh gia (derangement, seed 1234), KHONG huan luyen lai")
+    print("=" * 90)
+    valid_items_shuf = build_complex_shuffled_items(valid_items, seed=SEED)
+    p1_r2_pocket_shuf = eval_p1_pocket_shuf(p1_W_pocket, valid_items_shuf, valid_target_enc,
+                                             shift_cpu, scale_cpu)
+    for i, name in enumerate(DIM_NAMES):
+        print(f"      R2(pocket_shuf_eval)[{name}] = {p1_r2_pocket_shuf[i]:.4f}   "
+              f"delta(pocket - pocket_shuf_eval) = {p1_r2_valid_pocket[i] - p1_r2_pocket_shuf[i]:.4f}")
+    p1_B_by_dim = print_AB_table("P1", p1_r2_valid_pocket, p1_r2_valid_blind, p1_r2_pocket_shuf)
+    p1_m12a = classify_m12a_criterion("P1", p1_B_by_dim)
 
     # ------------------------------------------------------------------------- P2 ------------
     print("\n" + "=" * 90)
@@ -865,6 +964,30 @@ def main():
         p2_blind_ok = check_blind_converged("P2", bl_r2_valid, tm_r2_valid)
         if p2_blind_ok:
             p2_label, p2_d_by_dim = classify_main_criterion("P2", pk_r2_valid, bl_r2_valid)
+
+    # --- M12-a (plan.md Rev 16): nhanh thu tu pocket_shuf_eval, DUNG checkpoint pocket best_epoch
+    print("\n" + "=" * 90)
+    print("M12-a (P2): pocket_shuf_eval -- checkpoint pocket tai best_epoch, h_target xao tron "
+          "theo complex CHI luc danh gia (derangement, seed 1234), KHONG huan luyen lai")
+    print("=" * 90)
+    p2_r2_pocket_shuf, _ = eval_head(
+        pocket_head, make_loader(valid_items_shuf, args.batch_size, shuffle=False),
+        device, shift_dev, scale_dev, blind=False
+    )
+    for i, name in enumerate(DIM_NAMES):
+        print(f"      R2(pocket_shuf_eval)[{name}] = {p2_r2_pocket_shuf[i]:.4f}   "
+              f"delta(pocket - pocket_shuf_eval) = {pk_r2_valid[i] - p2_r2_pocket_shuf[i]:.4f}")
+    p2_B_by_dim = print_AB_table("P2", pk_r2_valid, bl_r2_valid, p2_r2_pocket_shuf)
+    p2_m12a = classify_m12a_criterion("P2", p2_B_by_dim)
+
+    print("\n" + "=" * 90)
+    print("DOI CHIEU M12-a: P1 vs P2 (nguong 0,081 ap cho cot B)")
+    print("=" * 90)
+    print(f"  P1 M12-a = {p1_m12a}   P2 M12-a = {p2_m12a}")
+    if p1_m12a != p2_m12a:
+        print("  => P1 va P2 cho ket luan M12-a KHAC nhau -- bao cao ca hai, khong tu quyet dinh them.")
+    else:
+        print(f"  => P1 va P2 DONG THUAN: {p1_m12a}.")
 
     # ------------------------------------------------------------------------- DOI CHIEU -----
     print("\n" + "=" * 90)
