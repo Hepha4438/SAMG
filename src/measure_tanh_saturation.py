@@ -7,9 +7,10 @@ xac nhan tien de).
 
 context_proj (step2_mdn_module.py, dung chung cho AutoregressiveFlowLayer va DiagonalGaussian
 Head) = nn.Sequential(Linear, LayerNorm, SiLU, Linear, Tanh). Neu Tanh() bao hoa (|out| gan 1
-tren phan lon phan tu) thi dao ham cuc nho tai do (d/dx tanh(x) = 1-tanh(x)^2 -> 0), nghen
-duong gradient tu Geo_Loss chay nguoc vao h_target/encoder -- du thong tin CO trong h_target,
-pipeline khong hoc duoc cach dung no vi gradient khong toi duoc.
+tren phan lon phan tu) thi dao ham cuc nho tai do (d/dx tanh(x) = 1-tanh(x)^2 -> 0).
+[SUA -- plan Rev 17 / RESEARCH_CONTEXT 34-pre.2] Tanh KHONG the chan gradient toi encoder vi
+v_context.detach() (step4_ligand_generator.py:99) da chan truoc. M12-b chi do (a) mat thong tin
+chieu forward (bao hoa => mat do lon), (b) hoc trong so cua chinh context_proj.
 
 Checkpoint periodic-epoch=024.ckpt, geo_head="maf" (AutoregressiveFlowLayer, context_proj
 giong het DiagonalGaussianHead -- do mot trong hai dai dien cho ca hai), MOT batch valid.
@@ -216,11 +217,15 @@ def main():
     if grads:
         gn_encoder = torch.cat(grads).norm().item()
         print(f"    grad.norm(dynamic_encoder.transformer.base_block[-1].x2h_layers[-1], "
-              f"TONG HOP tat ca tham so) = {gn_encoder:.6e}")
+              f"TONG HOP tat ca tham so) = {gn_encoder:.6e}  (DO CAU TRUC: v_context.detach() -- "
+              f"KHONG phai bang chung ve Tanh)")
+        if gn_encoder > 0:
+            print("    [!!!] grad encoder KHAC 0: kiem tinh C4 (34-pre.2) SAI -- DUNG, bao cao, "
+                  "khong doc gi khac (plan Rev 17 muc 3).")
     else:
         gn_encoder = None
         print("    grad.norm(dynamic_encoder lop cuoi) = KHONG CO GRAD (None) -- Geo_Loss khong "
-              "chay nguoc toi encoder")
+              "chay nguoc toi encoder (DO CAU TRUC: v_context.detach() -- KHONG phai bang chung ve Tanh)")
 
     # =========================================================================================
     # TIEU CHI DOC (plan.md Rev 16)
