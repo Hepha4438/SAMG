@@ -96,9 +96,15 @@ cd ~/SAMG && git pull && git log --oneline -3 && conda activate samg \
   ≈ 1 là đang chạy trên GPU; ≈ 10 là đang chạy CPU bằng nhiều thread (sai device).
 - Kiểm GPU: `nvidia-smi` — PID của script **phải** xuất hiện trong mục Processes.
 
-## F. Chia việc với Claude Code
+## F. Chia việc — ĐỔI từ 2026-10-25 (người dùng quyết định)
 
-Claude Code rất tốn token. Prompt cho nó phải: chỉ rõ **đọc mục nào** trong `plan.md` và
-`RESEARCH_CONTEXT.md`; liệt kê **đúng** file được sửa; nói rõ **không chạy script, không chạy
-training**; nêu các bẫy cụ thể đã biết; yêu cầu **commit từng việc riêng**. Không để nó tự đặt
-ngưỡng — ngưỡng do trợ lý ghi cứng trong `plan.md` trước khi chạy.
+**Trợ lý làm luôn phần code và commit.** Không còn bước viết prompt cho Claude Code.
+- Chỉ code **đúng** phần plan yêu cầu, không refactor, không dọn dẹp ngoài phạm vi.
+- Kiểm tra **chỉ ở mức cú pháp** (`python -m py_compile`) trên máy local. **Không chạy script, không chạy
+  training, không đo dữ liệu ở local** (R1 vẫn nguyên hiệu lực).
+- **Commit từng việc riêng**, xác minh blob đã commit khớp file (R11). Push khi người dùng cho phép.
+- Ngưỡng vẫn phải ghi cứng trong `plan.md` **trước** khi code và trước khi chạy.
+- Người dùng chạy mọi thứ trên server và dán log.
+
+*(Quy tắc cũ, giữ để truy nguồn: Claude Code đọc `plan.md` + `RESEARCH_CONTEXT.md` rồi code; prompt phải
+chỉ rõ mục cần đọc, file được sửa, không chạy script, bẫy đã biết, commit từng việc; không tự đặt ngưỡng.)*
