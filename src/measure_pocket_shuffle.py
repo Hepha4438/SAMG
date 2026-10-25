@@ -122,13 +122,17 @@ def default_ckpt(samg_root):
     return max(ckpts, key=os.path.getmtime) if ckpts else None
 
 
-def make_derangement(n, device, max_tries=10):
-    """torch.randperm cua n phan tu, khong co diem bat dong. Tra ve (perm, used_fallback)."""
+def make_derangement(n, device, max_tries=10, generator=None):
+    """torch.randperm cua n phan tu, khong co diem bat dong. Tra ve (perm, used_fallback).
+    generator (Rev 17): neu khac None, randperm tren CPU bang generator rieng roi chuyen device."""
     if n <= 1:
         return torch.roll(torch.arange(n, device=device), 1), True
     idx = torch.arange(n, device=device)
     for _ in range(max_tries):
-        perm = torch.randperm(n, device=device)
+        if generator is None:
+            perm = torch.randperm(n, device=device)
+        else:
+            perm = torch.randperm(n, generator=generator).to(device)
         if not bool((perm == idx).any()):
             return perm, False
     return torch.roll(idx, 1), True
@@ -225,6 +229,97 @@ def run_noop_check(model, loader, device, n_check=3):
     return overall_max_delta
 
 
+def r2_true_by_dim(ls, z):
+    """R2 DUNG = 1 - sigma^2 * E[z^2], sigma = exp(mean log_sigma) -- CUNG cong thuc voi vong
+    stats trong main() (RESEARCH_CONTEXT 25.2). ls, z: [N, 7]. Tra ve tensor [7]."""
+    sigma2 = torch.exp(2 * ls.mean(dim=0))
+    return 1 - sigma2 * (z ** 2).mean(dim=0)
+
+
+def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, loader_cls):
+    """M12-a Rev 17 (plan muc 1 T2): K lan, moi lan k mot torch.Generator(base+k) dung cho
+    (i) thu tu loader (shuffle=True) va (ii) derangement trong batch. Hai nhanh full/shuffled,
+    seed nhieu dequant dat lai trong run_branch (M10-1, khong doi). Tach tap all/t0/t1 theo vi
+    tri trong target_ids (cot 0 = fragment dau tien sau [SOS])."""
+    K = args.n_derangements
+    subs = ("all", "t0", "t1")
+    r2_full = {sb: [] for sb in subs}
+    r2_shuf = {sb: [] for sb in subs}
+    n_tok = {}
+    t_start = time.time()
+    for k in range(K):
+        g = torch.Generator().manual_seed(args.derangement_seed_base + k)
+        loader = loader_cls(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, generator=g)
+        acc = {"full": ([], []), "shuffled": ([], [])}
+        pos_chunks = []
+        n_fallback = 0
+        for i, batch in enumerate(loader):
+            batch = batch.to(device)
+            seed_i = SEED + i
+            num_graphs = batch.protein_element_batch.max().item() + 1
+            lens = batch.seq_len.tolist()
+            if isinstance(lens, int):
+                lens = [lens]
+            target_ids = torch.nn.utils.rnn.pad_sequence(
+                list(torch.split(batch.target_ids, lens)), batch_first=True, padding_value=0
+            )
+            target_7d_raw = torch.nn.utils.rnn.pad_sequence(
+                list(torch.split(batch.target_7d, lens)), batch_first=True, padding_value=0.0
+            ).double()
+            pad_mask = (target_ids != 0).view(-1)
+            target_real = ((target_7d_raw.view(-1, 7) - gen_shift) / gen_scale)[pad_mask]
+            Bsz, L = target_ids.shape
+            pos_grid = torch.arange(L, device=target_ids.device).unsqueeze(0).expand(Bsz, L).reshape(-1)
+            pos_chunks.append(pos_grid[pad_mask].cpu())
+
+            perm, used_fb = make_derangement(num_graphs, device, generator=g)
+            n_fallback += int(used_fb)
+            for branch, pm in (("full", None), ("shuffled", perm)):
+                mu, log_scale = run_branch(model, batch, device, pm, seed=seed_i)
+                if log_scale.shape[0] != pad_mask.shape[0]:
+                    raise RuntimeError(f"[{branch}] log_scale va pad_mask khong khop.")
+                ls_real = log_scale[pad_mask]
+                z_real = (target_real - mu[pad_mask]) / ls_real.exp()
+                acc[branch][0].append(ls_real.cpu())
+                acc[branch][1].append(z_real.cpu())
+            if (i + 1) % 20 == 0:
+                print(f"k {k + 1}/{K}  batch {i + 1}/{len(loader)} "
+                      f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
+        pos = torch.cat(pos_chunks)
+        masks = {"all": torch.ones_like(pos, dtype=torch.bool), "t0": pos == 0, "t1": pos >= 1}
+        ls_f, z_f = torch.cat(acc["full"][0]), torch.cat(acc["full"][1])
+        ls_s, z_s = torch.cat(acc["shuffled"][0]), torch.cat(acc["shuffled"][1])
+        for sb in subs:
+            m = masks[sb]
+            n_tok[sb] = int(m.sum())
+            r2_full[sb].append(r2_true_by_dim(ls_f[m], z_f[m]))
+            r2_shuf[sb].append(r2_true_by_dim(ls_s[m], z_s[m]))
+        print(f"[*] k={k} xong: seed={args.derangement_seed_base + k}  fallback_roll1={n_fallback}  "
+              f"delta R2(d, all) = {(r2_full['all'][-1][0] - r2_shuf['all'][-1][0]).item():.4f}  "
+              f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
+
+    print("\n" + "=" * 100)
+    print(f"M12-a Rev 17 -- PIPELINE: delta R2(full - shuffled) qua K={K} (loader shuffle + derangement "
+          f"theo generator rieng, seed {args.derangement_seed_base}..{args.derangement_seed_base + K - 1})")
+    print("=" * 100)
+    for sb in subs:
+        Rf = torch.stack(r2_full[sb])            # [K, 7]
+        D = Rf - torch.stack(r2_shuf[sb])
+        sd = D.std(dim=0, unbiased=True) if K > 1 else torch.zeros(7, dtype=D.dtype)
+        print(f"\n  TAP {sb}: n_token = {n_tok[sb]}")
+        print(f"      {'chieu':7}{'R2(full) mean':>15}{'delta mean':>12}{'delta sd':>10}{'min':>9}{'max':>9}")
+        for i, name in enumerate(DIM_NAMES):
+            print(f"      {name:7}{Rf[:, i].mean():15.4f}{D[:, i].mean():12.4f}{sd[i]:10.4f}"
+                  f"{D[:, i].min():9.4f}{D[:, i].max():9.4f}")
+        if sb in ("all", "t0"):
+            d_m, d_sd = D[:, 0].mean().item(), sd[0].item()
+            print(f"      delta_k(d) [{sb}] = {[round(v, 4) for v in D[:, 0].tolist()]}")
+            print(f"      delta_pipe(d, {sb}) = {d_m:.4f} +- {d_sd:.4f}  "
+                  f"[mean-2sd = {d_m - 2 * d_sd:.4f}, mean+2sd = {d_m + 2 * d_sd:.4f}]")
+    print("\n  (Kiem cheo plan Rev 17 muc 2 (8): delta_pipe(d, all) nen roi gan [0,0751 ; 0,0824]. "
+          "Tap t0: tro ly doc tay voi log probe.)")
+
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print_header(device)
@@ -240,7 +335,11 @@ def main():
     ap.add_argument("--loader-shuffle", action="store_true", default=False,
                      help="M10-b (RESEARCH_CONTEXT 27.6): shuffle=True cho loader, kiem xem "
                           "nghich ly valid>train co phai hien vat cua tap con co thu tu khong")
+    ap.add_argument("--n-derangements", type=int, default=1,
+                     help="M12-a Rev 17: K>1 => chi chay full/shuffled K lan, tach all/t0/t1")
+    ap.add_argument("--derangement-seed-base", type=int, default=1234)
     args = ap.parse_args()
+    print(f"K (n_derangements): {args.n_derangements}  derangement-seed-base: {args.derangement_seed_base}")
 
     import step6_trainer as st
     from omegaconf import OmegaConf
@@ -305,10 +404,16 @@ def main():
     # CHAN DOAN khong-doi TRUOC khi do (dung mot vong lap loader rieng; neu --loader-shuffle
     # thi lan lap nay va vong do chinh ben duoi KHONG doc cung thu tu batch -- khong sao vi
     # day chi con la chan doan, khong phai tieu chi, xem run_noop_check()).
-    run_noop_check(model, loader, device, n_check=3)
-
     gen_shift = model.generator.shift_factors.view(1, 7).double()
     gen_scale = model.generator.scale_factors.view(1, 7).double()
+
+    if args.n_derangements > 1:
+        print(f"[*] M12-a Rev 17: K={args.n_derangements} > 1 -- BO QUA run_noop_check va cac nhanh "
+              f"roll1/sizematched/noop; loader shuffle=True theo generator rieng moi k.")
+        run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, ProteinLigandDataLoader)
+        return
+
+    run_noop_check(model, loader, device, n_check=3)
 
     branches = ["full", "shuffled", "roll1", "shuffled_sizematched", "noop"]
     ls_chunks = {b: [] for b in branches}
@@ -477,13 +582,13 @@ def main():
         print(f"    delta R2(full-noop)[{name}] = {d_noop_by_dim[name]:.4f}")
     print(f"    delta R2(full-noop) toi da tren 7 chieu = {max_abs_d_noop:.4f}  (dieu kien 1: < 0.002 o MOI chieu)")
     print(f"    max|delta mu|/max|delta log_scale| (full vs noop, toan bo {n_batches_done} batch) = "
-          f"{noop_diag_overall_max_delta:.3e}  (dieu kien 1: < 1e-4)")
+          f"{noop_diag_overall_max_delta:.3e}  [RUT LAI -- Muc 30.3] (dieu kien 1: < 1e-4)")
     m10_cond1_ok = max_abs_d_noop < 0.002 and noop_diag_overall_max_delta < 1e-4
     if not m10_cond1_ok:
-        print("    => DIEU KIEN 1 KHONG DAT: con nguon ngau nhien chua khoa. DUNG, tim tiep, KHONG")
+        print("    [RUT LAI -- Muc 30.3] => DIEU KIEN 1 KHONG DAT: con nguon ngau nhien chua khoa. DUNG, tim tiep, KHONG")
         print("       doc M7-a/M7-b ben duoi (cac so van duoc in de tham khao/debug).")
     else:
-        print("    => DIEU KIEN 1 DAT: san nhieu da triet tieu. Doc tiep M7-a/M7-b voi dieu kien 2")
+        print("    [RUT LAI -- Muc 30.3] => DIEU KIEN 1 DAT: san nhieu da triet tieu. Doc tiep M7-a/M7-b voi dieu kien 2")
         print("       bo sung: delta R2(d,shuffled) phai > 10 x delta R2(d,noop).")
 
     print("\n" + "=" * 100)
