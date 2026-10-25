@@ -26,8 +26,8 @@ thể còn hiệu lực.
 | Checkpoint tham chiếu | `saved_checkpoints_flow/periodic-epoch=024.ckpt` (MAF, 25 epoch) |
 | Cache probe | `dataset/cache_probe/{train,valid}` — 733,4 MB / 33,3 MB. **ĐÃ CÓ, không dựng lại** (mất 2 giờ 24 phút) |
 
-⚠️ **`RESEARCH_CONTEXT.md` và `plan.md` KHÔNG nằm trong git** (untracked). Chúng chỉ tồn tại trên
-máy local. **Mục 34-pre và PLAN Rev 17 đã ghi** (2026-10-25, ghi cứng trước M12). Kết quả M12 ghi vào
+⚠️ **Từ 2026-10-25, `RESEARCH_CONTEXT.md`, `plan.md` và ba file hướng dẫn ĐÃ được commit vào git**
+(trước đó untracked, chỉ có ở local). **Bản gốc là file local**; bản trong Project chỉ là snapshot. **Mục 34-pre và PLAN Rev 17 đã ghi** (2026-10-25, ghi cứng trước M12). Kết quả M12 ghi vào
 **Mục 34**; kế hoạch sau đó là **PLAN Rev 18**.
 
 ## Trạng thái, năm dòng
