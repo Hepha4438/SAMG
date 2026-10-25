@@ -515,48 +515,69 @@ def build_complex_shuffled_items(items, seed=SEED):
             for i in range(n)]
 
 
-def eval_p1_pocket_shuf(best_W, valid_items_shuf, valid_target_enc, shift, scale):
-    """M12-a cho P1: ap DUNG ma tran ridge best_W DA FIT (khong refit) tren dac trung xay tu
-    valid_items_shuf (h_target/mask da xao tron theo complex, target-encoding/vi-tri GIU
-    NGUYEN vi khong phu thuoc h_target va khong doi theo hoan vi nay)."""
-    X_shuf, Y_raw = build_p1_features(valid_items_shuf, valid_target_enc, blind=False)
-    X_shuf = X_shuf.double()
-    Y_shuf = (Y_raw.double() - shift) / scale
-    pred_shuf = ridge_predict(best_W, X_shuf)
-    return compute_r2(pred_shuf, Y_shuf)
+M12_BAND_LO, M12_BAND_HI = 0.0751, 0.0824   # khoang quan sat ho M10 (plan Rev 17 muc 2 (4))
 
 
-def print_AB_table(probe_name, r2_pocket, r2_blind, r2_pocket_shuf):
-    """M12-a: bang canh nhau cot A = R2(pocket)-R2(blind) [train-ablation], cot B =
-    R2(pocket)-R2(pocket_shuf_eval) [inference-shuffle] -- cung loai voi M10. Tra ve B_by_dim."""
-    print(f"\n  [{probe_name}] BANG CANH NHAU (M12-a): cot A = R2(pocket)-R2(blind) "
-          f"[train-ablation]  |  cot B = R2(pocket)-R2(pocket_shuf_eval) [inference-shuffle, "
-          f"CUNG LOAI voi M10]")
-    print(f"      {'chieu':8}{'A (train-ablation)':>22}{'B (inference-shuffle)':>24}")
-    B_by_dim = {}
-    for i, name in enumerate(DIM_NAMES):
-        A = r2_pocket[i] - r2_blind[i]
-        B = r2_pocket[i] - r2_pocket_shuf[i]
-        B_by_dim[name] = B
-        print(f"      {name:8}{A:22.4f}{B:24.4f}")
-    return B_by_dim
+def p1_predict(W, items, target_enc, blind, shift, scale):
+    """P1: du doan (khong refit) cua ma tran ridge W tren items. Tra (pred, Y) da chuan hoa."""
+    X, Y_raw = build_p1_features(items, target_enc, blind=blind)
+    return ridge_predict(W, X.double()), (Y_raw.double() - shift) / scale
 
 
-def classify_m12a_criterion(probe_name, B_by_dim):
-    """Tieu chi doc M12-a (plan.md Rev 16), ap nguong 0,081 (M10) CHO COT B, KHONG cho cot A."""
-    B_d = B_by_dim["d"]
-    print(f"\n  [{probe_name}] TIEU CHI M12-a: B(d) = R2(pocket)-R2(pocket_shuf_eval) tai d, "
-          f"doi chieu nguong 0,081 (M10) -- CHI ap cho cot B")
-    print(f"      B(d) = {B_d:.4f}")
-    if B_d > 0.081:
-        print(f"      [{probe_name}] => XAC NHAN: pipeline khai thac KEM HON probe, CUNG "
-              f"estimator -- so sanh hop le. Di theo huong 'tim cho pipeline lam mat tin hieu'.")
-        return "XAC_NHAN"
+def token_positions(items):
+    """Vi tri t cua moi token, CUNG thu tu voi build_p1_features / loader shuffle=False."""
+    return torch.cat([torch.arange(it[3].shape[0]) for it in items])
+
+
+def subset_masks(pos):
+    return {"all": torch.ones_like(pos, dtype=torch.bool), "t0": pos == 0, "t1": pos >= 1}
+
+
+def report_m12a_rev17(probe_name, Y, pos, pred_tm, pred_blind, pred_pocket, preds_shuf):
+    """M12-a Rev 17: theo tap all/t0/t1 -- n_token, R2 tokenmean/blind/pocket, cot A, cot B
+    mean +- sd (min, max) qua K derangement. Tra ve {tap: (mean_B_d, sd_B_d, A_d)}."""
+    out = {}
+    K = len(preds_shuf)
+    for sub, msk in subset_masks(pos).items():
+        r2 = lambda pr: torch.tensor(compute_r2(pr[msk], Y[msk]), dtype=torch.float64)
+        r_tm, r_bl, r_pk = r2(pred_tm), r2(pred_blind), r2(pred_pocket)
+        B = torch.stack([r_pk - r2(ps) for ps in preds_shuf])          # [K, 7]
+        A = r_pk - r_bl
+        sd = B.std(dim=0, unbiased=True) if K > 1 else torch.zeros(7, dtype=torch.float64)
+        print(f"\n  [{probe_name}] TAP {sub}: n_token = {int(msk.sum())}  K = {K}")
+        print(f"      {'chieu':7}{'R2(tm)':>9}{'R2(blind)':>10}{'R2(pocket)':>11}{'A':>9}"
+              f"{'B mean':>9}{'B sd':>8}{'B min':>9}{'B max':>9}")
+        for i, name in enumerate(DIM_NAMES):
+            print(f"      {name:7}{r_tm[i]:9.4f}{r_bl[i]:10.4f}{r_pk[i]:11.4f}{A[i]:9.4f}"
+                  f"{B[:, i].mean():9.4f}{sd[i]:8.4f}{B[:, i].min():9.4f}{B[:, i].max():9.4f}")
+        di = DIM_NAMES.index("d")
+        if sub in ("all", "t0"):
+            print(f"      B_k(d) [{sub}] = {[round(v, 4) for v in B[:, di].tolist()]}")
+        out[sub] = (B[:, di].mean().item(), sd[di].item(), A[di].item())
+    return out
+
+
+def classify_m12a_rev17(probe_name, stats_all, readable):
+    """Tieu chi plan Rev 17 muc 2 (4), tap all. readable=False khi giao thuc #2/#3 khong dat."""
+    m, sd, A_d = stats_all
+    print(f"\n  [{probe_name}] TIEU CHI M12-a Rev 17 (tap all): B(d) = {m:.4f} +- {sd:.4f}  "
+          f"[mean-2sd = {m - 2 * sd:.4f}, mean+2sd = {m + 2 * sd:.4f}]  "
+          f"so voi khoang ho M10 [{M12_BAND_LO}, {M12_BAND_HI}]")
+    print(f"      [CHO DUYET 34-pre.3, chi in] kiem B(d) >= A(d) - 2sd: A(d) = {A_d:.4f}  "
+          f"=> {'DAT' if m >= A_d - 2 * sd else 'KHONG DAT'}")
+    if not readable:
+        print(f"      [{probe_name}] => KHONG DOC (giao thuc #2/#3 khong dat)")
+        return "KHONG_DOC"
+    if m - 2 * sd > M12_BAND_HI:
+        label = "XAC_NHAN"
+    elif m + 2 * sd < M12_BAND_LO:
+        label = "BAC"
     else:
-        print(f"      [{probe_name}] => BAC: ket luan 32.3/33.5 ('pipeline lam mat tin hieu') "
-              f"KHONG co can cu. Chenh lech o Muc 32-33 chi la hieu ung doi estimator. Huong di "
-              f"KHONG phai sua generator, phai thiet ke lai buoc tiep.")
-        return "BAC"
+        label = "KHONG_KET_LUAN"
+    print(f"      [{probe_name}] => {label}"
+          + ("  (cau chu: 'pipeline khai thac hoc kem hon probe o cung estimator' -- KHONG phai "
+             "'pipeline lam mat tin hieu'; tap t0 tro ly doc tay)" if label == "XAC_NHAN" else ""))
+    return label
 
 
 # ============================================================================================
@@ -601,7 +622,7 @@ class PoseProbeHead(nn.Module):
 
 
 @torch.no_grad()
-def eval_head(head, loader, device, shift, scale, blind):
+def eval_head(head, loader, device, shift, scale, blind, return_pred=False):
     head.eval()
     preds, targets = [], []
     for h_pad, m_pad, c_idx, pos, frag_ids, poses in loader:
@@ -615,6 +636,8 @@ def eval_head(head, loader, device, shift, scale, blind):
         targets.append(target_scaled.double())
     pred_all = torch.cat(preds, dim=0).cpu()
     target_all = torch.cat(targets, dim=0).cpu()
+    if return_pred:
+        return pred_all, target_all
     return compute_r2(pred_all, target_all), pred_all.shape[0]
 
 
@@ -757,11 +780,11 @@ def classify_main_criterion(probe_name, r2_pocket, r2_blind):
         print(f"      [{probe_name}] => TRUNG GIAN: bao cao va dung.")
 
     d_d = d_by_dim["d"]
-    print(f"      [{probe_name}] moc so sanh 0,081 (M10): delta R2(d) = {d_d:.4f}")
+    print(f"      [RUT LAI -- Muc 33.5] [{probe_name}] moc so sanh 0,081 (M10): delta R2(d) = {d_d:.4f}")
     if d_d > 0.081:
-        print(f"      [{probe_name}] => delta R2(d) > 0,081: pipeline day du dang LAM MAT tin hieu.")
+        print(f"      [RUT LAI -- Muc 33.5] [{probe_name}] => delta R2(d) > 0,081: pipeline day du dang LAM MAT tin hieu.")
     else:
-        print(f"      [{probe_name}] => delta R2(d) <= 0,081: tran o ENCODER, sua generator khong giup.")
+        print(f"      [RUT LAI -- Muc 33.5] [{probe_name}] => delta R2(d) <= 0,081: tran o ENCODER, sua generator khong giup.")
 
     print(f"      [{probe_name}] quaternion (bao cao, khong dat nguong):")
     for name in ["qw", "qx", "qy", "qz"]:
@@ -781,7 +804,10 @@ def main():
     ap.add_argument("--batch-size", type=int, default=32, help="So COMPLEX moi batch (P1 pool + P2 MLP)")
     ap.add_argument("--p2-max-epochs", type=int, default=60)
     ap.add_argument("--p2-patience", type=int, default=10)
+    ap.add_argument("--n-derangements", type=int, default=20,
+                     help="M12-a Rev 17: so derangement doc lap, seed SEED..SEED+K-1")
     args = ap.parse_args()
+    print(f"K (n_derangements): {args.n_derangements}  seeds: {SEED}..{SEED + args.n_derangements - 1}")
 
     import step6_trainer as st
     samg_root = st.SAMG_ROOT
@@ -892,7 +918,7 @@ def main():
         "pocket", train_items, valid_items, train_target_enc, valid_target_enc,
         shift_cpu, scale_cpu, blind=False, lambdas=lambdas
     )
-    p1_lam_blind, p1_r2_train_blind, p1_r2_valid_blind, _, _, _ = run_p1_branch(
+    p1_lam_blind, p1_r2_train_blind, p1_r2_valid_blind, _, _, p1_W_blind = run_p1_branch(
         "blind", train_items, valid_items, train_target_enc, valid_target_enc,
         shift_cpu, scale_cpu, blind=True, lambdas=lambdas
     )
@@ -917,19 +943,24 @@ def main():
         else:
             print("      => DUOI 0,05: Muc 32.5 dong lai, phep quay van la 'khong chi phoi boi hoc'.")
 
-    # --- M12-a (plan.md Rev 16): nhanh thu tu pocket_shuf_eval, DUNG model pocket DA FIT ------
+    # --- M12-a (plan.md Rev 17): pocket_shuf_eval x K derangement, tach all/t0/t1 -------------
     print("\n" + "=" * 90)
-    print("M12-a (P1): pocket_shuf_eval -- model pocket DA FIT, h_target xao tron theo complex "
-          "CHI luc danh gia (derangement, seed 1234), KHONG huan luyen lai")
+    print(f"M12-a (P1) Rev 17: pocket_shuf_eval -- ridge pocket DA FIT, h_target xao tron theo complex "
+          f"CHI luc danh gia, K={args.n_derangements} derangement, KHONG huan luyen lai")
     print("=" * 90)
-    valid_items_shuf = build_complex_shuffled_items(valid_items, seed=SEED)
-    p1_r2_pocket_shuf = eval_p1_pocket_shuf(p1_W_pocket, valid_items_shuf, valid_target_enc,
-                                             shift_cpu, scale_cpu)
-    for i, name in enumerate(DIM_NAMES):
-        print(f"      R2(pocket_shuf_eval)[{name}] = {p1_r2_pocket_shuf[i]:.4f}   "
-              f"delta(pocket - pocket_shuf_eval) = {p1_r2_valid_pocket[i] - p1_r2_pocket_shuf[i]:.4f}")
-    p1_B_by_dim = print_AB_table("P1", p1_r2_valid_pocket, p1_r2_valid_blind, p1_r2_pocket_shuf)
-    p1_m12a = classify_m12a_criterion("P1", p1_B_by_dim)
+    valid_pos = token_positions(valid_items)
+    shuf_sets = [build_complex_shuffled_items(valid_items, seed=SEED + k)
+                 for k in range(args.n_derangements)]
+    pred_tm_valid = torch.cat(valid_target_enc).double()   # = du doan tokenmean (Rev 15)
+    p1_pred_pocket, Y_valid_std = p1_predict(p1_W_pocket, valid_items, valid_target_enc, False, shift_cpu, scale_cpu)
+    p1_pred_blind, _ = p1_predict(p1_W_blind, valid_items, valid_target_enc, True, shift_cpu, scale_cpu)
+    p1_preds_shuf = [p1_predict(p1_W_pocket, it, valid_target_enc, False, shift_cpu, scale_cpu)[0]
+                     for it in shuf_sets]
+    print(f"  [kiem nhat quan] R2(tokenmean, all) tu target encoding = "
+          f"{['%.4f' % v for v in compute_r2(pred_tm_valid, Y_valid_std)]}  (phai khop GIAO THUC #1)")
+    p1_stats = report_m12a_rev17("P1", Y_valid_std, valid_pos, pred_tm_valid,
+                                 p1_pred_blind, p1_pred_pocket, p1_preds_shuf)
+    p1_m12a = classify_m12a_rev17("P1", p1_stats["all"], readable=p1_blind_ok)
 
     # ------------------------------------------------------------------------- P2 ------------
     print("\n" + "=" * 90)
@@ -964,30 +995,39 @@ def main():
         p2_blind_ok = check_blind_converged("P2", bl_r2_valid, tm_r2_valid)
         if p2_blind_ok:
             p2_label, p2_d_by_dim = classify_main_criterion("P2", pk_r2_valid, bl_r2_valid)
-
-    # --- M12-a (plan.md Rev 16): nhanh thu tu pocket_shuf_eval, DUNG checkpoint pocket best_epoch
-    print("\n" + "=" * 90)
-    print("M12-a (P2): pocket_shuf_eval -- checkpoint pocket tai best_epoch, h_target xao tron "
-          "theo complex CHI luc danh gia (derangement, seed 1234), KHONG huan luyen lai")
-    print("=" * 90)
-    p2_r2_pocket_shuf, _ = eval_head(
-        pocket_head, make_loader(valid_items_shuf, args.batch_size, shuffle=False),
-        device, shift_dev, scale_dev, blind=False
-    )
-    for i, name in enumerate(DIM_NAMES):
-        print(f"      R2(pocket_shuf_eval)[{name}] = {p2_r2_pocket_shuf[i]:.4f}   "
-              f"delta(pocket - pocket_shuf_eval) = {pk_r2_valid[i] - p2_r2_pocket_shuf[i]:.4f}")
-    p2_B_by_dim = print_AB_table("P2", pk_r2_valid, bl_r2_valid, p2_r2_pocket_shuf)
-    p2_m12a = classify_m12a_criterion("P2", p2_B_by_dim)
-
-    print("\n" + "=" * 90)
-    print("DOI CHIEU M12-a: P1 vs P2 (nguong 0,081 ap cho cot B)")
-    print("=" * 90)
-    print(f"  P1 M12-a = {p1_m12a}   P2 M12-a = {p2_m12a}")
-    if p1_m12a != p2_m12a:
-        print("  => P1 va P2 cho ket luan M12-a KHAC nhau -- bao cao ca hai, khong tu quyet dinh them.")
     else:
-        print(f"  => P1 va P2 DONG THUAN: {p1_m12a}.")
+        p2_blind_ok = False
+
+    # --- M12-a (plan.md Rev 17): checkpoint pocket best_epoch x K derangement ------------------
+    print("\n" + "=" * 90)
+    print(f"M12-a (P2) Rev 17: pocket_shuf_eval -- checkpoint pocket tai best_epoch, "
+          f"K={args.n_derangements} derangement, KHONG huan luyen lai")
+    print("=" * 90)
+    ev = lambda head, items, blind: eval_head(head, make_loader(items, args.batch_size, shuffle=False),
+                                              device, shift_dev, scale_dev, blind=blind, return_pred=True)
+    p2_pred_pocket, Y2 = ev(pocket_head, valid_items, False)
+    p2_pred_blind, _ = ev(blind_head, valid_items, True)
+    p2_preds_shuf = [ev(pocket_head, it, False)[0] for it in shuf_sets]
+    print(f"  [kiem nhat quan] max|Y(P2) - Y(P1)| = {(Y2 - Y_valid_std).abs().max().item():.2e}  "
+          f"(phai ~0: cung thu tu token)")
+    p2_stats = report_m12a_rev17("P2", Y2, valid_pos, pred_tm_valid,
+                                 p2_pred_blind, p2_pred_pocket, p2_preds_shuf)
+    p2_m12a = classify_m12a_rev17("P2", p2_stats["all"], readable=p2_readable and p2_blind_ok)
+
+    print("\n" + "=" * 90)
+    print("VERDICT TONG HOP M12-a Rev 17 -- CHI TAP all (tap t0 tro ly doc tay voi log pipeline)")
+    print("=" * 90)
+    print(f"  P1 = {p1_m12a}   P2 = {p2_m12a}")
+    if p1_m12a == p2_m12a == "XAC_NHAN":
+        print("  => tap all: XAC_NHAN o ca hai probe. Verdict CUOI con phu thuoc tap t0 (plan Rev 17 muc 2 (5)-(6)).")
+    elif p1_m12a == p2_m12a == "BAC":
+        print("  => BAC (P1 va P2 deu BAC o tap all).")
+    else:
+        print("  => KHONG KET LUAN (P1/P2 bat dong, hoac co probe KHONG_KET_LUAN/KHONG_DOC).")
+    for nm, st_ in (("P1", p1_stats), ("P2", p2_stats)):
+        m0, sd0, _ = st_["t0"]
+        print(f"  [{nm}] tap t0: B(d) = {m0:.4f} +- {sd0:.4f}  [mean-2sd = {m0 - 2 * sd0:.4f}, "
+              f"mean+2sd = {m0 + 2 * sd0:.4f}]  -> so voi delta_pipe(d, t0) tu measure_pocket_shuffle.py")
 
     # ------------------------------------------------------------------------- DOI CHIEU -----
     print("\n" + "=" * 90)
