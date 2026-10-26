@@ -544,6 +544,10 @@ def report_m12a_rev17(probe_name, Y, pos, pred_tm, pred_blind, pred_pocket, pred
         B = torch.stack([r_pk - r2(ps) for ps in preds_shuf])          # [K, 7]
         A = r_pk - r_bl
         sd = B.std(dim=0, unbiased=True) if K > 1 else torch.zeros(7, dtype=torch.float64)
+        # Rev 18 (b): Var_k(m) = E[(pred_pocket - pred_shuf_k)^2]/2 ; G_k = B_k - Var_k(m)
+        V = torch.stack([((pred_pocket[msk] - ps[msk]) ** 2).mean(dim=0) / 2 for ps in preds_shuf])
+        G = B - V
+        sdG = G.std(dim=0, unbiased=True) if K > 1 else torch.zeros(7, dtype=torch.float64)
         print(f"\n  [{probe_name}] TAP {sub}: n_token = {int(msk.sum())}  K = {K}")
         print(f"      {'chieu':7}{'R2(tm)':>9}{'R2(blind)':>10}{'R2(pocket)':>11}{'A':>9}"
               f"{'B mean':>9}{'B sd':>8}{'B min':>9}{'B max':>9}")
@@ -553,6 +557,17 @@ def report_m12a_rev17(probe_name, Y, pos, pred_tm, pred_blind, pred_pocket, pred
         di = DIM_NAMES.index("d")
         if sub in ("all", "t0"):
             print(f"      B_k(d) [{sub}] = {[round(v, 4) for v in B[:, di].tolist()]}")
+        print(f"      [Rev 18 (b)] {'chieu':7}{'A':>9}{'Var(m)':>9}{'G mean':>9}{'G sd':>8}{'G-A':>9}")
+        for i, name in enumerate(DIM_NAMES):
+            print(f"      [Rev 18 (b)] {name:7}{A[i]:9.4f}{V[:, i].mean():9.4f}{G[:, i].mean():9.4f}"
+                  f"{sdG[i]:8.4f}{G[:, i].mean() - A[i]:9.4f}")
+        gm, gs = G[:, di].mean().item(), sdG[di].item()
+        print(f"      [Rev 18 (b)] G_probe(d, {sub}) = {gm:.4f} +- {gs:.4f}  "
+              f"[mean-2sd = {gm - 2 * gs:.4f}, mean+2sd = {gm + 2 * gs:.4f}]")
+        if sub == "all":
+            ok = abs(gm - A[di].item()) <= 0.03
+            print(f"      [Rev 18 (b0)] |G(d) - A(d)| = {abs(gm - A[di].item()):.4f} <= 0,03 ? "
+                  f"=> {'DAT' if ok else 'KHONG DAT -- probe nay KHONG dung o (b2)'}")
         out[sub] = (B[:, di].mean().item(), sd[di].item(), A[di].item())
     return out
 
