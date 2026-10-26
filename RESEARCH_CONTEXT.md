@@ -2700,3 +2700,77 @@ c=0.2 nhieu=0.0: A=0,0361  B=0,0401  B-A=0,0040  Var(m)=0,0040
 **Duoc ghi:** ket luan cau truc C4 (34-pre.2). Tieu chi M12 Rev 17.
 **Cho duyet:** 34-pre.3 (dong nhat thuc `B - A = Var(m)` va du doan R5).
 **Chua chay:** M12-a, M12-b. Can Claude Code lam T1–T3 (Rev 17) truoc.
+
+---
+
+## 34. M12 (server, 2026-10-26, HEAD `53b4778`): M12-a KHONG KET LUAN; M12-b LOAI Tanh; moc M10 bi do THAP ~2,6x
+Logs: `logs/m12a_probe_rev17.log`, `logs/m12a_pipe_t0_rev17.log` (`--batch-size 8`), `logs/m12b_tanh.log`.
+Ca ba: `device: cuda`, HEAD `53b4778`, `K = 20` (hai log M12-a). Tieu chi: PLAN Rev 17 muc 2–3 (ghi cung o 34-pre).
+**Con thieu tu nguoi dung:** output `readlink -f ~/SAMG`, `ls logs/m12b_tanh.log`, va `git status --short src/` tren
+server (log Tanh ghi `batch_size=8` — can xac nhan code chay dung commit, R2).
+
+### 34.1. M12-b: LOAI gia thuyet Tanh (20.8)
+`|tanh_out| > 0,99` = **0,00%** (18.432 phan tu, 1 batch valid, 8 complex, 72 token). `max|pre-activation|` = 1,91
+(`tanh(1,91) = 0,956`), `mean` 0,33. Duoi 5% ⇒ **LOAI** theo tieu chi ghi cung.
+Gradient: `context_proj[0].weight` 5,93; `context_proj[3].weight` 3,65; `dynamic_encoder` lop cuoi = **None**
+— dung du doan cau truc 34-pre.2 muc 4 ⇒ **kiem tinh C4 duoc xac nhan khi chay**.
+
+### 34.2. M12-a theo dung thu tu Rev 17 muc 2
+**(1) tokenmean** (all): `d 0,0670 | theta 0,0811 | phi 0,1022` — khop A6.
+**(2) Giao thuc #3:** dat ca hai probe (P1 blind `0,1203/0,0776/0,1671`; P2 `0,1301/0,1658/0,1952`).
+* P2 **tai lap tung chu so**: `delta R2 = 0,0999 / 0,0674 / 0,0690`.
+* P1 **doi** so voi 33.1 vi day quet `lambda` mo rong (Rev 16): `blind` chon `1e4` thay `1e3` ⇒
+  `delta R2 = 0,0889 / 0,2206 / 0,0361` (truoc: 0,1040 / 0,2050 / 0,0488). Van 2/3 ⇒ tien de giu nguyen.
+  Cau 33.3 "bien thien 0,0005, khong the doi ket luan" dung ve ket luan, **sai ve do lon** (`delta R2(d)` doi 0,015).
+**(3) Dong nhat thuc 34-pre.3 `B >= A - 2sd`:** dat o `d` ca 3 tap x 2 probe. Tren 7 chieu x 3 tap x 2 probe:
+**40/42** o dat; hai o vi pham deu la `qz`, sat bien (P1 `t1`: B 0,0057 vs A−2sd 0,0085; P2 `t0`: 0,1310 vs 0,1369).
+Du doan R5 (tap `all` gan nhu chac chan XAC NHAN) **dung**. ⇒ 34-pre.3 **duoc du lieu ung ho** (nguoi dung duyet 2026-10-26).
+**(4) Tap `all`, B(d) qua K = 20:** P1 **0,1573 ± 0,0140**; P2 **0,3112 ± 0,0201**. Ca hai `mean − 2sd > 0,0824` ⇒ XAC NHAN ca hai.
+**(5) Tap `t0`** (764 token): pipeline `delta(d) = 0,3595 ± 0,0402` [0,2792 ; 0,4399].
+* P1 **0,1238 ± 0,0184** (mean+2sd 0,1606 < 0,2792) ⇒ **BAC t0** — probe dung hoc **it hon** pipeline.
+* P2 **0,2895 ± 0,0220** [0,2455 ; 0,3335] chong lan ⇒ **KHONG KET LUAN t0**.
+**(6) Verdict tong hop: KHONG KET LUAN** (P1/P2 bat dong o `t0`). "Pipeline khai thac hoc kem hon probe"
+**KHONG duoc xac lap.**
+
+### 34.3. Kiem cheo (8) — phat hien quan trong nhat: moc M10 bi do thap
+Pipeline, xao tron moi (loader `shuffle=True` + derangement trong batch, generator rieng moi k):
+```
+tap all (4869 token)  R2(full)  delta mean ± sd      M10 (loader khong xao, batch 16)
+d                      0,4095   0,2160 ± 0,0183      0,0824
+theta                  0,4267   0,1307 ± 0,0100      0,0015
+phi                    0,3607   0,0748 ± 0,0117      0,0208
+qw                     0,5294   0,0496 ± 0,0038      0,0110
+qx                     0,1743   0,0070 ± 0,0014     -0,0007
+qy                     0,7989   0,0159 ± 0,0059      0,0026
+qz                     0,2922   0,0631 ± 0,0039      0,0098
+```
+`R2(full)` khop A3 (lech <= 0,01) ⇒ cung mo hinh, cung du lieu; chi doi **cach xao tron**. `delta(d)` lon gap **~2,6 lan**.
+**Gia thuyet (CHUA kiem):** loader khong xao ghep cac complex lien ke — nhieu kha nang cung protein/cung hoc — vao cung
+batch, nen derangement trong batch thuong doi hoc lay mot hoc gan nhu giong het. Kiem: Rev 18 (a).
+**He qua:**
+1. **Nguong o buoc (4) lay tu mot estimator KHAC** voi estimator cua probe (probe xao toan tap). So tren cung cach xao:
+   P1 0,157 ≲ pipeline 0,216 ≪ P2 0,311 — hai probe nam **hai phia** pipeline. Khong doi verdict (da la KHONG KET
+   LUAN), khong sua tieu chi sau khi thay so (R9).
+2. **Do lon o A5 / Muc 29–30 la CAN DUOI va phu thuoc giao thuc.** Ca tinh chat "giu 83% khi khop kich co" (29.5)
+   cung do bang cach xao yeu nay.
+3. **Phep quay CO dung hoc** duoi cach xao manh: `qz 0,063 ± 0,004`, `qw 0,050 ± 0,004` (>> san nhieu 0,0011).
+   Them nua P2 `A(qz) = 0,0500` cham dung nguong `>= 0,05` cua Rev 15 ("mo lai 16.1") — 33.2 chi doc P1 (−0,0049)
+   nen **da bo sot**. ⇒ "phep quay khong chiu chi phoi cua hoc" (A5, A6, 33.2) **[XEM LAI — Muc 34.3]**.
+4. **C4 khong con la ung vien hien nhien:** o `t0`, pipeline dung hoc cho `d` it nhat ngang ca hai probe du duong
+   dieu kien hoa chi duoc huan luyen boi token loss. Chua co bang chung pipeline dung hoc kem.
+
+### 34.4. Gioi han cua chinh dai luong B (tu dong nhat thuc 34-pre.3)
+`B = 2 Cov(r, m)` **tang theo do lon cua `m`** ke ca khi `m` bi phong qua muc toi uu. Tu so do: `Var(m) = B − A`:
+P1 `d`: Cov ≈ 0,079, Var(m) ≈ 0,068 (do doc hoi quy `r` theo `m` ≈ 1,15 — `m` hoi nho); P2 `d`: Cov ≈ 0,156,
+Var(m) ≈ 0,211 (≈ 0,74 — `m` bi **phong qua**, khop voi overfit cua P2). ⇒ **B khong phai thuoc do sach cua "dung hoc".**
+Dai luong sach hon: **loi ich MSE `G = B − Var(m) = 2 Cov − Var(m)`**, voi `Var(m) = E[(mu_full − mu_shuf)^2] / 2`
+(do truc tiep tu output, khong can train). Voi probe, `G` phai ≈ `A` neu dong nhat thuc dung. Xem Rev 18 (b).
+Luu y them: R2 cua pipeline o Muc 25–34 la `1 − sigma^2 E[z^2]`, chi bang `1 − MSE(mu)` khi `sigma` khong doi theo
+token; dong nhat thuc viet cho MSE ⇒ (b) phai bao cao ca ban MSE cua pipeline.
+
+### 34.5. Trang thai sau Muc 34
+**Duoc ghi:** Tanh bi loai (34.1). C4 xac nhan cau truc, tinh va dong. Dong nhat thuc `B − A = Var(m)` duoc du lieu
+ung ho (34.2 (3)). Tien de (A6) giu nguyen; so P1 cap nhat.
+**Rut lai / xem lai:** 33.5 (co che sai, 34-pre.3); do lon A5 (can duoi, 34.3); "phep quay khong chiu chi phoi cua
+hoc" (34.3 muc 3); so P1 o 33.1 (34.2 (2)).
+**Chua xac lap:** pipeline khai thac hoc kem hay khong (M12-a khong ket luan). Buoc tiep: Rev 18 (a) va (b).
