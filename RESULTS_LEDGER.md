@@ -59,7 +59,10 @@ càng sau càng học nhiều" — `d` ở vị trí 1 có R² cao nhất trong 
 Hai dấu vân tay độc lập cho cơ chế dấu của `qy`: nhóm `|qy|` trội có `log σ` thấp hơn rõ (83% dưới
 −1,0 so với 3,4%, Mục 23.2), và `E[z²](qy) = 0,675` trong khi 6 chiều kia 0,94–1,01 (Mục 24.5).
 
-### A5. Hốc protein CÓ được dùng — chỉ cho tịnh tiến (xáo trộn lúc suy luận, pipeline)
+### A5. Hốc protein CÓ được dùng (xáo trộn lúc suy luận, pipeline)
+> ⚠️ **[XEM LẠI — Mục 34.3]** Bảng dưới đo bằng loader **không xáo** + tráo trong batch 16 ⇒ chỉ là **cận dưới**,
+> phụ thuộc giao thức. Với loader xáo (M12, K=20): `d` **0,216 ± 0,018**, `theta` 0,131, `phi` 0,075, `qw` 0,050,
+> `qz` **0,063** ⇒ câu "chỉ cho tịnh tiến / phép quay không có gì" **không còn đứng**. Rev 18 (a) kiểm nguyên nhân.
 `Δ R²` = `R²(full) − R²(shuffled)` trên valid; **sàn nhiễu đo được = 0,0008–0,0011**:
 
 | chiều | Δ R² | bội số sàn nhiễu |
@@ -86,7 +89,7 @@ Sàn tuyệt đối `tokenmean` (trung bình 7D theo `frag_id`): `d` 0,0670 · `
 
 | | Δ R²(`d`) | Δ R²(`theta`) | Δ R²(`phi`) | đạt |
 |---|---|---|---|---|
-| **P1** ridge + target encoding OOF | 0,1040 | 0,2050 | 0,0488 | 2/3 |
+| **P1** ridge + target encoding OOF | 0,1040 → **0,0889** | 0,2050 → **0,2206** | 0,0488 → **0,0361** | 2/3 |
 | **P2** MLP + early stopping | **0,0999** | **0,0674** | **0,0690** | 3/3 |
 
 **Hai giao thức độc lập cùng kết luận ⇒ xác nhận** (Mục 33.1).
@@ -94,7 +97,9 @@ Sàn tuyệt đối `tokenmean` (trung bình 7D theo `frag_id`): `d` 0,0670 · `
 `phi ≈ 0,069`. `d` vững nhất: 0,1040 và 0,0999 gần như trùng (Mục 33.3).
 **`theta` và `phi` đều phụ thuộc giao thức** — không trình bày ngang hàng với `d`. `theta` lệch nặng hơn:
 0,2050 (P1) vs 0,0674 (P2), ~3×; `phi` 0,0488 vs 0,0690 (Mục 33.4, 34-pre.5).
-`Δ R²(qz) = −0,0049` < 0,05 ⇒ kết luận "phép quay không chịu chi phối của hốc" **giữ nguyên** (33.2).
+P1 đổi (mũi tên) vì dải `lambda` mở rộng tới 1e5 ⇒ `blind` chọn 1e4 (Mục 34.2). P2 **tái lập từng chữ số** (M12).
+~~`Δ R²(qz) = −0,0049` < 0,05 ⇒ "phép quay không chịu chi phối của hốc" giữ nguyên (33.2).~~ **[XEM LẠI — Mục 34.3]**:
+33.2 chỉ đọc P1; P2 có `A(qz) = 0,0500`, chạm ngưỡng ≥ 0,05 của Rev 15.
 
 ### A7. Hạ tầng đã sửa
 - **Seed**: `pl.seed_everything(1234)`, `deterministic=True` (commit `7ce0f06`). Trước đó **không có
@@ -105,7 +110,16 @@ Sàn tuyệt đối `tokenmean` (trung bình 7D theo `frag_id`): `d` 0,0670 · `
 - **`step7_evaluation.py`**: truyền `config=` tường minh vào `load_from_checkpoint` là cách khôi
   phục đúng `geo_head` (Mục 24.6).
 
-### A7b. Kết luận cấu trúc C4 (đọc code tĩnh, HEAD `eb32820`, Mục 34-pre.2)
+### A6b. Đẳng thức estimator (Mục 34-pre.3, dữ liệu ủng hộ ở 34.2)
+Cùng một mô hình: `B (inference-shuffle) − A (train-ablation) = Var(m) ≥ 0`, với `B = 2·Cov(r, m)`. Đúng ở `d` mọi tập,
+40/42 ô tổng. Hệ quả: **B tăng theo độ lớn của `m`**, kể cả khi `m` bị phóng quá ⇒ B không phải thước đo sạch;
+dùng **lợi ích MSE `G = B − Var(m)`** (Rev 18 b).
+
+### A6c. M12 (Mục 34): M12-a **KHÔNG KẾT LUẬN**; M12-b **loại Tanh**
+B(d) tập all: P1 0,157 ± 0,014 · pipeline 0,216 ± 0,018 · P2 0,311 ± 0,020. Tập t0: P1 0,124 · P2 0,290 · pipeline 0,360.
+Tanh: `|out| > 0,99` = 0,00%, `max|pre-act|` = 1,91.
+
+### A7b. Kết luận cấu trúc C4 (đọc code tĩnh, HEAD `eb32820`, Mục 34-pre.2; xác nhận khi chạy 34.1)
 Mọi đường `h_target → geometric_head` đi qua `v_context.detach()` (`step4:99`). Gradient `Geo_Loss` dừng
 tại `geo_in_proj`/`geometric_head` ⇒ **attention hub chỉ được huấn luyện bởi token loss**; encoder bởi
 token + pocket loss. Input của `ar_decoder` chỉ có danh tính token, **không** có pose fragment trước.
@@ -140,7 +154,11 @@ token + pocket loss. Input của `ar_decoder` chỉ có danh tính token, **khô
 | "M6/M7 bị nhiễm nhiễu dequant" (27.3) | vòng đo chính nằm **trong** vùng zero-hoá; phép kiểm thì không | 28.1 |
 | "Rò rỉ train/valid" | giao rỗng ở cả `pli_id` và PDB | 27.1 |
 | "`qy` thoái hoá trong dữ liệu" | đồng nhất với `qw/qx/qz` ở mọi thống kê | 21.1 |
-| "Pipeline đang làm mất tín hiệu" | **chưa có căn cứ** — đang so hai estimator khác nhau. ⚠️ Cơ chế mà 33.5 viện dẫn cũng sai: cùng một mô hình thì Δ inference-shuffle ≥ Δ train-ablation (34-pre.3, **chờ duyệt**) | **33.5**, 34-pre.3 |
+| "Pipeline đang làm mất tín hiệu" | **chưa có căn cứ** — đang so hai estimator khác nhau. ⚠️ Cơ chế mà 33.5 viện dẫn cũng sai: cùng một mô hình thì Δ inference-shuffle ≥ Δ train-ablation (34-pre.3, dữ liệu ủng hộ 34.2) | **33.5**, 34-pre.3, 34.2 |
+
+| "Tanh bão hoà là nghẽn" (20.8, nghi phạm #1 Rev 16) | `|tanh_out| > 0,99` = 0,00% | 34.1 |
+| "Phép quay không chịu chi phối của hốc" (A5, 33.2) | **[XEM LẠI]** — xáo mạnh cho `qz` 0,063, `qw` 0,050; P2 `A(qz)` = 0,05 | 34.3 |
+| Độ lớn `d` ≈ 0,08 (M10, A5) là "mức pipeline dùng hốc" | cận dưới, phụ thuộc cách xáo (0,216 khi xáo loader) | 34.3 |
 
 ## C. ĐÃ HUỶ — không hồi sinh
 - **G5** (3 nhánh huấn luyện, ~15–22 giờ): M6/M7 trả lời bằng forward-only. Huỷ từ Rev 7.
