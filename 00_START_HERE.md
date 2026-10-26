@@ -9,8 +9,8 @@ thể còn hiệu lực.
 2. **`RESULTS_LEDGER.md`** — mọi con số đã xác lập (phần A), đã rút lại (B), đã huỷ (C), đang hoãn (D).
 3. **`WORKING_RULES.md`** — 15 quy tắc rút ra từ 9 lần đặt tiêu chí sai. Đọc hết **trước khi** viết
    tiêu chí đầu tiên.
-4. **`plan.md`** — chỉ đọc **PLAN Rev 16** ở cuối file, trừ khi cần truy nguồn.
-5. **`RESEARCH_CONTEXT.md`** — 2.582 dòng. **Không đọc tuần tự.** Chỉ tra khi cần chi tiết một mục
+4. **`plan.md`** — chỉ đọc **PLAN Rev mới nhất** ở cuối file (hiện **Rev 18**), trừ khi cần truy nguồn.
+5. **`RESEARCH_CONTEXT.md`** — ~2.800 dòng. **Không đọc tuần tự.** Chỉ tra khi cần chi tiết một mục
    cụ thể mà `RESULTS_LEDGER.md` đã trỏ tới.
 
 ## Môi trường
@@ -22,7 +22,7 @@ thể còn hiệu lực.
 | Server GPU | `/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG`. Lệnh chạy dùng `~/SAMG` — quan hệ (symlink?) **CHƯA XÁC MINH**; chạy `readlink -f ~/SAMG` trên server |
 | conda env (server) | `samg` |
 | GPU | 3× RTX A5000 24 GB, **dùng chung với người khác** |
-| HEAD | **`eb32820`**, đã push lên `origin/main3` |
+| HEAD | xem `git log --oneline -3` trên `main3`; M12 chạy ở `53b4778` |
 | Checkpoint tham chiếu | `saved_checkpoints_flow/periodic-epoch=024.ckpt` (MAF, 25 epoch) |
 | Cache probe | `dataset/cache_probe/{train,valid}` — 733,4 MB / 33,3 MB. **ĐÃ CÓ, không dựng lại** (mất 2 giờ 24 phút) |
 
@@ -30,81 +30,26 @@ thể còn hiệu lực.
 (trước đó untracked, chỉ có ở local). **Bản gốc là file local**; bản trong Project chỉ là snapshot. **Mục 34-pre và PLAN Rev 17 đã ghi** (2026-10-25, ghi cứng trước M12). Kết quả M12 ghi vào
 **Mục 34**; kế hoạch sau đó là **PLAN Rev 18**.
 
-## Trạng thái, năm dòng
+## Trạng thái (2026-10-26, sau Mục 34)
 
-1. Nhãn 7D đã sạch, ghép dữ liệu đã đúng, rò rỉ ligand đã bịt, **không có rò rỉ train/valid/test**,
-   huấn luyện ổn định và đã tái lập được.
-2. Mô hình hiện tại học **ràng buộc `‖q‖=1`** của quaternion chứ không học hướng xoay từ hốc — thang
-   đại số đơn điệu, hai dấu vân tay độc lập (`RESULTS_LEDGER` A4).
-3. Hốc protein **có** được dùng, nhưng chỉ cho **tịnh tiến**: `d` thật và rõ (~100× sàn nhiễu), `phi`
-   nhỏ nhưng thật, `theta` không tách được, phép quay không có gì (A5).
-4. **Tiền đề cốt lõi ĐƯỢC XÁC NHẬN** (A6): thông tin tư thế **có sẵn** trong đầu ra encoder đóng
-   băng — hai giao thức độc lập, trên valid chưa dùng, có sàn tuyệt đối. Con số công bố: `d ≈ 0,100`,
-   `theta ≈ 0,067`, `phi ≈ 0,069`.
-5. Câu **"pipeline đang làm mất tín hiệu" CHƯA có căn cứ** — đang so hai estimator khác nhau.
-   **M12-a tồn tại để phân xử đúng việc này.** Cơ chế 33.5 viện dẫn cũng sai (34-pre.3, **chờ duyệt**).
-6. **C4 xác nhận tĩnh** (34-pre.2): đường điều kiện hoá chỉ được huấn luyện bởi token loss
-   (`v_context.detach()`, `step4:99`). C4 là nghi phạm **#1**, Tanh xuống #2.
+1. Nhãn 7D sạch, ghép dữ liệu đúng, rò rỉ ligand đã bịt, **không rò rỉ train/valid/test**, huấn luyện tái lập được.
+2. Mô hình học **ràng buộc `‖q‖=1`** của quaternion (thang đại số, A4).
+3. Hốc protein **có** được dùng. Độ lớn **phụ thuộc cách xáo**: M10 (loader không xáo) `d` ≈ 0,08 là **cận dưới**;
+   xáo loader cho `d` **0,216**, và cả `qz` 0,063 / `qw` 0,050 ⇒ "phép quay không có gì" đang **XEM LẠI** (34.3).
+4. **Tiền đề XÁC NHẬN** (A6): thông tin tư thế có sẵn trong encoder đóng băng. Số công bố (P2, tái lập từng chữ số):
+   `d ≈ 0,100`, `theta ≈ 0,067`, `phi ≈ 0,069`.
+5. **"Pipeline khai thác hốc kém hơn probe": KHÔNG KẾT LUẬN** (M12-a, 34.2). Hai probe nằm hai phía pipeline.
+   Đẳng thức `B − A = Var(m)` được dữ liệu ủng hộ ⇒ B không sạch; đo **lợi ích MSE G** (Rev 18 b).
+6. **Tanh bị loại** (34.1). **C4** xác nhận cấu trúc (tĩnh + khi chạy) nhưng **chưa có bằng chứng gây hại**.
+   Danh sách nghi phạm (C4 / null-sink) **tạm dừng** cho tới khi (b) cho thấy pipeline thực sự thu kém.
 
-## VIỆC KẾ TIẾP: M12 — CHƯA CHẠY. Tiêu chí và lệnh ĐÃ THAY bởi PLAN Rev 17
+## VIỆC KẾ TIẾP: PLAN Rev 18 — (a) và (b)
+Code đã viết bởi trợ lý (WORKING_RULES F). Tiêu chí, lệnh chạy, tên log: **`plan.md` → PLAN Rev 18**. Kết quả → **Mục 35**.
+- **(a)** `check_valid_adjacency.py` — không GPU: các complex liền kề trong valid có chung hốc không (giải thích M10 thấp?).
+- **(b)** chạy lại hai script M12 (K=20) với `Var(m)` và `G = B − Var(m)`; so `G_pipe(d)` với `G_probe(d)`.
+- Còn thiếu từ M12: output `readlink -f ~/SAMG` và `git status --short src/` trên server.
 
-> ⚠️ **Phần dưới (đến hết mục M12-b) là tiêu chí Rev 16, đã bị Rev 17 thay thế.** Trước khi chạy,
-> Claude Code phải làm T1–T3 của Rev 17 (K=20 derangement, tách `t=0`/`t≥1`, gắn nhãn verdict cũ).
-> Tiêu chí đọc, lệnh chạy và tên log mới: **`plan.md` → PLAN Rev 17 mục 2–4**. Giữ phần dưới để truy nguồn.
-
-### ⚠️ Cảnh báo bắt buộc trước khi đọc bất cứ gì
-**`logs/m12b_tanh.log` (84 byte, 3 dòng, `device: cpu`, 13/10 11:52) — đã thấy ở máy LOCAL; trên server
-CHƯA KIỂM** (Rev 17 có lệnh `ls` kiểm). Đó là một lần chạy **lỡ ở local**, **KHÔNG phải kết quả**. Xoá hoặc đổi tên nó trước khi chạy lại, và **không bao
-giờ** đọc nó như số liệu. (Quy tắc R1 trong `WORKING_RULES.md`.)
-Không có `m12a_probe_rev4.log` — M12-a chưa từng chạy.
-
-### Lệnh
-```bash
-cd ~/SAMG && git pull && git log --oneline -3 && conda activate samg
-rm -f logs/m12b_tanh.log
-CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/probe_pose_regression.py 2>&1 | tee logs/m12a_probe_rev4.log
-CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/measure_tanh_saturation.py 2>&1 | tee logs/m12b_tanh.log
-```
-Dòng đầu mỗi log **phải** là `device: cuda`. Nếu là `cpu` thì dừng, không đọc.
-
-### M12-a — làm khớp estimator. Tiêu chí ghi cứng (plan Rev 16), KHÔNG được sửa
-Nhánh mới **`pocket_shuf_eval`** dùng **đúng mô hình `pocket` đã huấn luyện** (P1: ma trận ridge đã
-fit; P2: checkpoint tại `best_epoch`), chỉ xáo trộn `h_target` + `target_mask` (cùng hoán vị,
-derangement seed 1234) **lúc đánh giá trên valid**. Không huấn luyện lại.
-
-Hai cột, cả 7 chiều:
-- **cột A** = `R²(pocket) − R²(blind)` → **train-ablation**
-- **cột B** = `R²(pocket) − R²(pocket_shuf_eval)` → **inference-shuffle, CÙNG LOẠI với M10**
-
-**Ngưỡng 0,081 CHỈ áp cho cột B, tại chiều `d`:**
-- **B(d) > 0,081** ⇒ **XÁC NHẬN** pipeline khai thác kém hơn probe (cùng estimator). Khi đó mới đi
-  theo hướng "tìm chỗ pipeline làm mất tín hiệu".
-- **B(d) ≤ 0,081** ⇒ **BÁC** kết luận 32.3/33.5. Chênh lệch ở Mục 32–33 chỉ là hiệu ứng đổi
-  estimator. Hướng đi **không** phải sửa generator, và phải thiết kế lại bước tiếp theo.
-
-### M12-b — bão hoà `nn.Tanh()`, nghi phạm số 1. Tiêu chí ghi cứng
-Cả hai head kết thúc `context_proj` bằng `nn.Tanh()`. Nếu bão hoà thì nghẽn đường từ `h_target` vào
-head — và vì **cả hai head dùng chung**, phép so sánh head không thể phát hiện nó.
-- `|tanh_out| > 0,99` **vượt 30%** ⇒ Tanh là nghẽn thật, phải bỏ **trước** mọi so sánh head.
-- **dưới 5%** ⇒ loại giả thuyết (Mục 20.8), chuyển sang nghi phạm #2.
-- trung gian ⇒ báo cáo, **không kết luận**.
-
-### Thứ tự đọc log M12-a
-1. Giao thức #1: `R²(tokenmean)` cả 7 chiều.
-2. Giao thức #3: `R²(blind)` phải **≥ `R²(tokenmean)` − 0,03** ở mọi chiều tịnh tiến. Không đạt ⇒
-   `blind` chưa hội tụ ⇒ **không** đọc tiêu chí chính.
-3. Cột A và B cạnh nhau; áp ngưỡng 0,081 **chỉ** cho **B(d)**.
-4. M12-b độc lập với M12-a.
-
-## Nếu M12-a dương tính: ba nghi phạm
-> ⚠️ Rev 17: thứ tự mới là **#1 C4, #2 Tanh, #3 null-sink**. C4 đã xác nhận tĩnh là có thật về cấu trúc
-> (34-pre.2); Tanh không thể chặn gradient tới encoder vì detach chặn trước. Danh sách dưới là thứ tự cũ (Rev 16).
-1. **`nn.Tanh()`** — M12-b đã đo luôn.
-2. **`v_context.detach()`** (hạng mục C4, hoãn từ plan Rev 4) — nếu gradient hình học không chạy
-   ngược vào attention hub và encoder thì đường điều kiện hoá **không được huấn luyện** cho nhiệm vụ
-   hình học.
-3. **Attention hub một lớp + null-sink** — số key = `R_max + 1`; nếu khối lượng attention dồn vào
-   null-sink thì `h_target` bị bỏ qua. Kiểm bằng phân phối trọng số attention.
+Lịch sử M12 (tiêu chí Rev 16→17, log `m12b_tanh.log` lỡ chạy local 13/10) xem `plan.md` Rev 16–17 và Mục 34-pre/34.
 
 ## Quyết định dự án (2026-10-01, người dùng đồng ý): KHÔNG viết lại từ đầu
 Mọi bug đã sửa là bug **quy ước miền** (frame, thứ tự quaternion, ghép dữ liệu, mask padding, nhiễu
