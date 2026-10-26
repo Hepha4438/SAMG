@@ -1421,3 +1421,60 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/measure_tanh_s
 ```
 Chi phi T2: 2 nhanh x 20 lan x het valid. **Khong uoc** (R13: moi uoc luong cua tro ly deu thap).
 Theo doi bang dong tien do moi 20 batch.
+
+---
+
+# PLAN Rev 18 (2026-10-26) — sau M12: (a) vi sao M10 do thap, (b) loi ich MSE thay cho B
+
+Can cu: RESEARCH_CONTEXT **Muc 34**. M12-a **KHONG KET LUAN**; M12-b **LOAI** Tanh. Thu tu nghi pham Rev 17
+(C4/Tanh/null-sink) **tam dung**: chua co bang chung pipeline dung hoc kem (34.3 muc 4), nen chua di "tim cho mat tin hieu".
+Tro ly code + commit (WORKING_RULES F). Ca hai phep do duoi day **forward-only / doc du lieu**, khong train.
+
+## (a) Ghep cap trong batch khi loader khong xao — `src/check_valid_adjacency.py` (MOI, khong GPU, khong model)
+Dung `SAMGOptimizedDataset(split_mode="valid")` (cung loc `frame_stable`) va **dung thu tu `valid_indices`** = thu tu
+loader `shuffle=False`. PDB = `pdb_id_of(pli_id)` import tu `check_split_leakage.py` (R14). Tam hoc = `pocket_t` trong pkl.
+"Cung hoc" = cung PDB **va** `||pocket_t_i − pocket_t_j|| < 2,0 A` (bao cao them 1,0 va 4,0 A).
+Voi batch lien tiep co kich co `bs` in {16 (M10), 8}: `s(bs) = trung binh_i [ so thanh vien KHAC cung batch cung hoc /
+(n_batch − 1) ]` (= xac suat cap xao tron cung hoc, vi derangement chon doi tac deu trong batch).
+Bao cao `s_pdb(bs)`, `s_pocket(bs)`, va **moc ngau nhien** `s_rand` = cung dai luong nhung doi tac la moi complex khac
+trong toan valid. In them: so PDB duy nhat, phan phoi so complex/PDB.
+
+**Tieu chi ghi cung.** Gia dinh: cap cung hoc cho `delta ≈ 0`, cap khac hoc cho `delta` day du ⇒ du doan
+`delta_M10 ≈ (1 − s_pocket(16)) × 0,2160`. Can `s ≈ 0,63` de ra 0,079 (giua khoang ho M10).
+* `s_pocket(16) >= 0,50` **va** du doan roi trong `[0,0451 ; 0,1124]` (khoang ho M10 ± 0,03) ⇒ **XAC NHAN**: thu tu
+  loader giai thich su do thap cua M10.
+* `s_pocket(16) < 0,20` ⇒ **BAC**: thu tu khong phai nguyen nhan chinh; phai tim nguon khac.
+* con lai ⇒ mot phan, **khong ket luan**.
+Gioi han ghi truoc: PDB chi la can duoi cua "cung protein" (cung protein khac ma PDB khong bat duoc).
+
+## (b) Loi ich MSE `G = B − Var(m)` — sua `probe_pose_regression.py` va `measure_pocket_shuffle.py`
+Voi moi k: `Var_k(m) = E[(pred_pocket − pred_shuf_k)^2] / 2` tung chieu; `G_k = B_k − Var_k(m)`. Bao cao `mean ± sd`
+qua K cho tap `all`/`t0`/`t1`, 7 chieu, canh A va B.
+Pipeline: dung `mu` cua hook; them ban **MSE**: `R2_mse = 1 − E[(t − mu)^2]`, `B_mse = MSE(shuf) − MSE(full)`,
+`Var(m) = E[(mu_full − mu_shuf)^2]/2`, `G = B_mse − Var(m)`. Giu ca B ban `1 − sigma^2 E[z^2]` de doi chieu.
+Lenh chay lai **y het** M12 (K = 20, seed 1234..1253, pipeline `--batch-size 8`).
+
+**Tieu chi ghi cung, doc theo thu tu:**
+(b0) **Kiem dong nhat thuc tren probe:** `|mean G(d) − A(d)| <= 0,03`, tap `all`, tung probe. Khong dat ⇒ G khong uoc
+     luong duoc loi ich train-ablation cho probe do ⇒ probe do **khong** dung o (b2).
+(b1) Pipeline: `|B_mse(d) − B(d)| > 0,03` (tap `all`) ⇒ ghi lai: hai dinh nghia R2 lech, **(b2) chi doc ban MSE**.
+(b2) **Chinh**, tap `all`, so `G_pipe(d)` voi `G_probe(d)` (mean ± 2sd ca hai) cho moi probe qua (b0):
+     * `G_pipe + 2sd < G_probe − 2sd` voi **moi** probe qua (b0) ⇒ **"pipeline thu duoc it loi ich MSE tu hoc hon probe"**
+       (cau chu mem, giong Rev 17 (7)). Chi khi do moi mo lai huong C4 / null-sink.
+     * `G_pipe − 2sd > G_probe + 2sd` voi **moi** probe qua (b0) ⇒ **BAC** 32.3 dut diem: pipeline thu duoc it nhat ngang
+       probe. Huong "sua cho pipeline lam mat tin hieu" **dong lai**.
+     * Probe nam hai phia, chong lan, hoac khong probe nao qua (b0) ⇒ **KHONG KET LUAN**.
+(b3) Tap `t0`: doc cung luat, chi bao cao. Neu `t0` nguoc verdict `all` ⇒ verdict cuoi **KHONG KET LUAN**.
+(b4) Quaternion: bao cao `G(qw)`, `G(qz)`; khong nguong (34.3 muc 3 se viet nguong rieng sau (b)).
+**R5:** neu pipeline khai thac ngang probe thi `G_pipe(d) ≈ A_probe(d) ≈ 0,09–0,10` (all) — dat duoc. Neu (b0) dat,
+`G_probe` ≈ `A` nen moi nhanh deu co the xay ra.
+
+## Lenh server
+```bash
+cd ~/SAMG && git pull && git log --oneline -3 && git status --short src/ && conda activate samg
+readlink -f ~/SAMG
+python -u src/check_valid_adjacency.py 2>&1 | tee logs/m13a_adjacency.log
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/probe_pose_regression.py --n-derangements 20 2>&1 | tee logs/m13b_probe.log
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/measure_pocket_shuffle.py --split valid --n-derangements 20 --batch-size 8 2>&1 | tee logs/m13b_pipe.log
+```
+Ket qua ghi vao **Muc 35**.
