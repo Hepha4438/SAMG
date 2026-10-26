@@ -245,12 +245,14 @@ def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, load
     subs = ("all", "t0", "t1")
     r2_full = {sb: [] for sb in subs}
     r2_shuf = {sb: [] for sb in subs}
+    mse_stats = {sb: [] for sb in subs}   # Rev 18 (b): moi k -> (R2_mse_full, B_mse, Var_m, G) [4, 7]
     n_tok = {}
     t_start = time.time()
     for k in range(K):
         g = torch.Generator().manual_seed(args.derangement_seed_base + k)
         loader = loader_cls(dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, generator=g)
-        acc = {"full": ([], []), "shuffled": ([], [])}
+        acc = {"full": ([], [], []), "shuffled": ([], [], [])}   # (ls, z, mu) token that
+        tgt_chunks = []
         pos_chunks = []
         n_fallback = 0
         for i, batch in enumerate(loader):
@@ -271,6 +273,7 @@ def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, load
             Bsz, L = target_ids.shape
             pos_grid = torch.arange(L, device=target_ids.device).unsqueeze(0).expand(Bsz, L).reshape(-1)
             pos_chunks.append(pos_grid[pad_mask].cpu())
+            tgt_chunks.append(target_real.cpu())
 
             perm, used_fb = make_derangement(num_graphs, device, generator=g)
             n_fallback += int(used_fb)
@@ -282,6 +285,7 @@ def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, load
                 z_real = (target_real - mu[pad_mask]) / ls_real.exp()
                 acc[branch][0].append(ls_real.cpu())
                 acc[branch][1].append(z_real.cpu())
+                acc[branch][2].append(mu[pad_mask].cpu())
             if (i + 1) % 20 == 0:
                 print(f"k {k + 1}/{K}  batch {i + 1}/{len(loader)} "
                       f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
@@ -289,11 +293,19 @@ def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, load
         masks = {"all": torch.ones_like(pos, dtype=torch.bool), "t0": pos == 0, "t1": pos >= 1}
         ls_f, z_f = torch.cat(acc["full"][0]), torch.cat(acc["full"][1])
         ls_s, z_s = torch.cat(acc["shuffled"][0]), torch.cat(acc["shuffled"][1])
+        mu_f, mu_s = torch.cat(acc["full"][2]), torch.cat(acc["shuffled"][2])
+        tgt = torch.cat(tgt_chunks)
         for sb in subs:
             m = masks[sb]
             n_tok[sb] = int(m.sum())
             r2_full[sb].append(r2_true_by_dim(ls_f[m], z_f[m]))
             r2_shuf[sb].append(r2_true_by_dim(ls_s[m], z_s[m]))
+            # Rev 18 (b): ban MSE cua mu (cung dinh nghia R2 = 1 - MSE voi probe)
+            mse_f = ((tgt[m] - mu_f[m]) ** 2).mean(dim=0)
+            mse_s = ((tgt[m] - mu_s[m]) ** 2).mean(dim=0)
+            var_m = ((mu_f[m] - mu_s[m]) ** 2).mean(dim=0) / 2
+            b_mse = mse_s - mse_f
+            mse_stats[sb].append(torch.stack([1 - mse_f, b_mse, var_m, b_mse - var_m]))
         print(f"[*] k={k} xong: seed={args.derangement_seed_base + k}  fallback_roll1={n_fallback}  "
               f"delta R2(d, all) = {(r2_full['all'][-1][0] - r2_shuf['all'][-1][0]).item():.4f}  "
               f"(elapsed {time.time() - t_start:.1f}s)", flush=True)
@@ -316,6 +328,19 @@ def run_m12a_pipe_rev17(model, dataset, args, device, gen_shift, gen_scale, load
             print(f"      delta_k(d) [{sb}] = {[round(v, 4) for v in D[:, 0].tolist()]}")
             print(f"      delta_pipe(d, {sb}) = {d_m:.4f} +- {d_sd:.4f}  "
                   f"[mean-2sd = {d_m - 2 * d_sd:.4f}, mean+2sd = {d_m + 2 * d_sd:.4f}]")
+        M = torch.stack(mse_stats[sb])          # [K, 4, 7]
+        Msd = M.std(dim=0, unbiased=True) if K > 1 else torch.zeros_like(M[0])
+        print(f"      [Rev 18 (b)] {'chieu':7}{'R2_mse(full)':>14}{'B_mse':>9}{'Var(m)':>9}{'G mean':>9}{'G sd':>8}")
+        for i, name in enumerate(DIM_NAMES):
+            print(f"      [Rev 18 (b)] {name:7}{M[:, 0, i].mean():14.4f}{M[:, 1, i].mean():9.4f}"
+                  f"{M[:, 2, i].mean():9.4f}{M[:, 3, i].mean():9.4f}{Msd[3, i]:8.4f}")
+        g_m, g_sd = M[:, 3, 0].mean().item(), Msd[3, 0].item()
+        print(f"      [Rev 18 (b)] G_pipe(d, {sb}) = {g_m:.4f} +- {g_sd:.4f}  "
+              f"[mean-2sd = {g_m - 2 * g_sd:.4f}, mean+2sd = {g_m + 2 * g_sd:.4f}]")
+        if sb == "all":
+            diff = abs(M[:, 1, 0].mean().item() - D[:, 0].mean().item())
+            print(f"      [Rev 18 (b1)] |B_mse(d) - B(d)| = {diff:.4f}  "
+                  f"=> {'> 0,03: hai dinh nghia R2 lech, (b2) chi doc ban MSE' if diff > 0.03 else '<= 0,03'}")
     print("\n  (Kiem cheo plan Rev 17 muc 2 (8): delta_pipe(d, all) nen roi gan [0,0751 ; 0,0824]. "
           "Tap t0: tro ly doc tay voi log probe.)")
 
