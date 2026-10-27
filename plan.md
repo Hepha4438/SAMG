@@ -1478,3 +1478,45 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/probe_pose_reg
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/measure_pocket_shuffle.py --split valid --n-derangements 20 --batch-size 8 2>&1 | tee logs/m13b_pipe.log
 ```
 Ket qua ghi vao **Muc 35**.
+
+---
+
+# PLAN Rev 19 (2026-10-27) — (a') "cung protein" theo chuan nganh (R16)
+
+Can cu: RESEARCH_CONTEXT **Muc 35**. (a) cua Rev 18 chi bac duoc mot dinh nghia tu dat (35.1). Lam lai voi dinh
+nghia co nguon. Khong GPU, khong model. Tro ly code + commit (WORKING_RULES F).
+
+## (a') Xac suat cap derangement trong batch la "cung protein"
+**Dinh nghia va nguon (R16):**
+* "Cung protein" = **cung cluster MMseqs2 o 30% do trung chuoi** — chuan split cua CrossDocked2020 duoc Frag2Seq
+  (PDF, phu luc du lieu: "split ... according to 30% sequence identity using MMseqs2") va 3DMolFormer (PDF, "< 30%")
+  su dung. Lenh: `mmseqs easy-cluster --min-seq-id 0.3`; **cac tham so khac de mac dinh** (hai bai khong neu ⇒
+  ghi ro la quy uoc). Bao cao them nguong 0,95 (gan "cung protein" theo nghia hep) — **quy uoc du an**, chi tham khao.
+* Chuoi dung de cluster = chain dong gop nhieu residue nhat vao hoc `receptor_holo_pocket10.pdb` (hoc = residue trong
+  10 A quanh ligand, dinh nghia cua Apo2Mol, PDF muc 5), lay tu `receptor_holo_prot.pdb` (entry[3]).
+* Thu tu = `valid_indices` (loader `shuffle=False`), giong Rev 18 (a). `s(bs)` dinh nghia nhu Rev 18 (a).
+
+**Tieu chi — nguong suy tu DU LIEU (R16 muc 2), ghi cung truoc khi chay:**
+Gia dinh (quy uoc du an, R16 muc 3, se kiem nhan qua neu can): cap cung protein cho `delta ≈ 0`.
+Du doan `delta_M10 = (1 − s_seq30(16)) × 0,2156` (Muc 35, `delta_pipe(d, all)`). Sai so dung `sd(delta_pipe) = 0,0185`
+do duoc qua K = 20. Khoang tuong thich = ho M10 ± 2sd = **[0,0381 ; 0,1194]** ⇔ `s` trong **[0,446 ; 0,823]**.
+* `0,446 <= s_seq30(16) <= 0,823` ⇒ **TUONG THICH**: thu tu loader ghep cung protein du giai thich M10 do thap.
+  Chua phai bang chung nhan qua — buoc sau (neu lam) la do `delta` rieng cho cap cung/khac cluster tren GPU.
+* `s_seq30(16) < 0,446` ⇒ **BAC**: cung protein khong du giai thich; phai tim nguon khac.
+* `s_seq30(16) > 0,823` ⇒ **KHONG KHOP**: gia dinh "cung protein ⇒ delta ≈ 0" sai mot phan; **khong ket luan**.
+Bao cao them `s_rand` (doi tac ngau nhien toan valid) va so cluster.
+
+## Cai dat MMseqs2 tren server (khong dung vao env `samg`)
+```bash
+mkdir -p ~/tools && cd ~/tools && wget -q https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz && tar xzf mmseqs-linux-avx2.tar.gz
+~/tools/mmseqs/bin/mmseqs version
+```
+Neu CPU khong co AVX2: dung `mmseqs-linux-sse41.tar.gz`. Ghi `mmseqs version` vao log.
+
+## Lenh server
+```bash
+cd ~/SAMG && git pull && git log --oneline -3 && git status --short src/ && conda activate samg
+readlink -f ~/SAMG
+python -u src/check_valid_adjacency.py --mmseqs ~/tools/mmseqs/bin/mmseqs 2>&1 | tee logs/m14a_adjacency_seqid.log
+```
+Ket qua ghi vao **Muc 36**.
