@@ -1653,3 +1653,31 @@ python -u src/check_step0_rerun.py --old-scaler /tmp/scaler_7d_OLD.pt --old-voca
 ```
 Sau khi K1-K4 **dat**: `python -u src/build_fragment_dict.py 2>&1 | tee logs/m16_fragdict.log` (A1).
 Ket qua ghi vao **Muc 38**.
+
+---
+
+# PLAN Rev 20 — bo sung sau A1' (2026-10-27)
+
+**Do phu TU VUNG = 3.981/3.981 = 1,0000** (Muc 38.3) ⇒ moi token mo hinh co the sinh ra deu co template.
+Do phu valid 95,05% / phan tu 73,30% **khong** phai loi: valid co fragment chua tung thay trong train, chung
+phai roi vao `[UNK]` (Frag2Seq 3.3.1, vocab train-only).
+
+## A1b (BAT BUOC, ~20 phut). Khoi phuc `pocket_R`/`pocket_t`
+Can cu Muc **38.6**: chay lai step0 da xoa hai truong nay ⇒ step6 se loi KeyError.
+```bash
+python -u src/add_pocket_frame_to_pkl.py 2>&1 | tee logs/m18_pocket_frame.log
+```
+**Doc:** script tu bao so file xu ly va so file `_get_pocket_frame` cho ket qua khac lan step0 (`n_mismatch`).
+`n_mismatch > 0` ⇒ **DUNG**: frame hoc khong tai lap duoc giua hai lan chay, phai tim nguyen nhan truoc khi di tiep.
+
+## A2a (BAT BUOC truoc khi sua Step 7). Kiem phep nghich dao tu NHAN THAT
+Khong mo hinh, khong tu dien fragment (dung `local_coords` theo tung lan xuat hien). Tieu chi ghi cung:
+**RMSD < 0,5 A o >= 18/20 complex**. Kem chan doan cho duoi `rmsd_spread` (Muc 38.2).
+```bash
+python -u src/check_reconstruction.py --split valid --n 20 --diag-smiles '*O*' 2>&1 | tee logs/m18_recon.log
+```
+**Doc:** DAT ⇒ phep nghich dao dung, viet lai Step 7 (A2b). KHONG DAT ⇒ **DUNG**, khong doc so Vina nao.
+Chan doan: `max|d sorted| ~ 0` nhung `kabsch` lon ⇒ hoan vi thu tu nguyen tu (vo hai).
+`max|d sorted|` LON ⇒ hinh hoc that su khac ⇒ truy tiep truoc khi di.
+
+Ket qua ghi vao **Muc 39**.
