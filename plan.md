@@ -1715,3 +1715,31 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/step6_trainer.
 `vocab_size` phai ~3.983, **khong** phai 19.033 — neu van 19.033 thi loader doc vocab cu, **DUNG**.
 
 Ket qua ghi vao **Muc 40**.
+
+---
+
+# PLAN Rev 20 — sua sau khi C that bai lan 1 (2026-10-28)
+
+Can cu RESEARCH_CONTEXT **40-pre**. Hai loi: step6 tu dong resume checkpoint cu (tu vung lech); `geo_head`
+mac dinh `diag_gauss` trong khi moi cong cu do doc MAF. Da sua ca hai.
+
+## C (lan 2). Luu tru checkpoint cu, roi huan luyen tu dau voi MAF
+```bash
+cd ~/SAMG && git pull && git log --oneline -2 && conda activate samg
+# Luu tru, KHONG xoa (R12): checkpoint cu thuoc tu vung 19.033, moi so Muc 24-35 gan voi chung
+mkdir -p saved_checkpoints_flow_OLD_vocab19033
+mv saved_checkpoints_flow/*.ckpt saved_checkpoints_flow_OLD_vocab19033/
+ls saved_checkpoints_flow_OLD_vocab19033/ | head
+
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/step6_trainer.py --geo-head maf \
+  2>&1 | tee logs/m20_train_maf.log
+```
+**Kiem o dau log, truoc khi de chay qua dem:**
+* `vocab_size: 3983` (neu 19.033 ⇒ dang doc vocab cu, DUNG)
+* `geo_head: maf  permutation ARN: tensor([0,1,2,3,4,5,6])` (P3a-1)
+* `[*] Huan luyen TU DAU (khong resume).`
+* `Total valid Train complexes: 17200` / `Val: 764`
+Sau ~2 phut phai thay epoch 0 chay va `Token_Loss` giam. **Token_Loss dau ky vong thap hon han lan truoc**
+(~ln(3983) = 8,29 thay vi ~ln(19033) = 9,85 khi doan deu) — day la **bao cao**, khong phai cong chan.
+
+Ket qua ghi vao **Muc 40**.
