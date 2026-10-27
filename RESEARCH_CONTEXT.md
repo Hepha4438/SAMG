@@ -2950,3 +2950,28 @@ Frag2Seq co lam; chi tiet chua doc. Xem Rev 20 B2.
 dao day du va mat xich thieu (37-pre.3).
 **Can kiem tren server:** L4.
 **He qua cho ke hoach:** **Step 7 phai sua TRUOC khi huan luyen lai.** Xem PLAN Rev 20.
+
+### 37-pre.5. NGHI VAN NANG o `step0`: token fragment co the mang CHI SO NGUYEN TU cua phan tu goc
+`step0_data_prep.py:209`: `Chem.FragmentOnBonds(mol, bonds_to_break)` — goi **khong** truyen `dummyLabels`.
+Mac dinh cua RDKit khi `addDummies=True` va `dummyLabels=None`: nguyen tu dummy duoc gan **isotope = chi so
+nguyen tu** cua dau kia cua lien ket bi cat. Du lieu khop: pkl dau tien co `smiles = '[1*]N[6*]'` — "1" va "6"
+la **chi so nguyen tu trong phan tu goc**, khong phai nhan hoa hoc.
+**Neu dung, hau qua rat nang:**
+1. **Cung mot fragment hoa hoc o hai phan tu khac nhau ⇒ HAI token khac nhau.** Tu vung phinh to va bi phan
+   manh: `vocab_size = 19.033` tren 17.200 phan tu train (~1,1 token mỗi phan tu) — **tuong thich** voi gia
+   thuyet nay, va kho giai thich neu token la fragment hoa hoc thuan.
+2. **Token sinh ra vo nghia ve hoa hoc:** mo hinh phat ra token mang chi so cua mot phan tu train nao do.
+3. **Tu dien fragment (Rev 20 A1) bi nhiem:** key chua chi so ⇒ do phu tren valid se rat thap.
+4. Giai thich duoc vi sao `Token_Loss ~ 3,349` kho giam va vi sao N1 (thu tu fragment) kho doc.
+**CHUA XAC NHAN** — can kiem tren server (lenh o plan Rev 20). Neu xac nhan, day la **sua bat buoc o step0**
+truoc moi lan huan luyen lai: truyen `dummyLabels=[(0,0)] * len(bonds_to_break)` (tat ca dummy thanh `[*]`),
+hoac dung nhan **hoa tri/loai lien ket** nhu BRICS thay vi chi so.
+**Nguon cho ban sua:** Frag2Seq muc 3.2 cat lien ket xoay duoc (3 dieu kien — **giong het** `step0:206`), va luu
+tu dien theo **canonical SMILES cua fragment** (muc 3.3.1) ⇒ key phai la SMILES **hoa hoc**, khong mang chi so.
+
+### 37-pre.6. Thu tu fragment: step0 KHAC Frag2Seq (hang muc N1, nay co nguon chinh xac)
+`step0:230`: `frag_data.sort(key=lambda x: x["smiles"])` — sap **theo thu tu bang chu cai cua SMILES**.
+Frag2Seq muc 3.2/3.3.1: sap theo **thu tu xuat hien trong canonical SMILES cua CA PHAN TU**, cu the theo
+"the order of a fragment's first-ranked atom". Day la hai thu tu khac nhau: cua Frag2Seq phan anh **lien ket
+hoa hoc doc chuoi**, cua step0 thi khong. ⇒ N1 gio co **nguon** cho ban sua, khong con la "khiem khuyet chua
+biet sua the nao".
