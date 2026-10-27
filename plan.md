@@ -1616,13 +1616,19 @@ Danh sach ung vien (deu dang HOAN, moi muc phai co nguon truoc khi dua vao):
 ```bash
 cd ~/SAMG && git pull && git log --oneline -3 && git status --short src/ && conda activate samg
 readlink -f ~/SAMG
-# kiem L4 (37-pre.2), vai giay:
-python -c "
-from rdkit import Chem
-s='[1*]N[6*]'+'[3*]C[4*]'
-m=Chem.MolFromSmiles(s); print('concat parse:', m is not None)
-s2=s.replace('*','C'); m2=Chem.MolFromSmiles(s2)
-print('sau replace:', s2, '->', m2 is not None, Chem.MolToSmiles(m2) if m2 else '', m2.GetNumAtoms() if m2 else '')
-"
+python -u src/check_step0_tokens.py 2>&1 | tee logs/m15_step0_tokens.log
 ```
+`check_step0_tokens.py` (Rev 20, tro ly viet) kiem **hai** nghi van, deu vai giay, khong GPU:
+* **L4** (37-pre.2): ghep chuoi SMILES hai fragment roi `.replace("*","C")` — parse ra phan tu gi.
+* **37-pre.5**: token fragment co mang chi so nguyen tu khong.
+
+**Tieu chi doc, ghi cung TRUOC khi chay:**
+* **37-pre.5:** goi `U` = so token duy nhat sau khi thay moi `[N*]` bang `[*]`, `V` = so token.
+  `U / V < 0,50` ⇒ **XAC NHAN**: token mang chi so nguyen tu ⇒ **bat buoc sua `step0`** (truyen `dummyLabels`)
+  truoc moi lan huan luyen lai, va tu dien A1 phai dung key da xoa chi so.
+  `U / V > 0,90` ⇒ **BAC**: tu vung la fragment hoa hoc thuan, step0 khong can sua cho viec nay.
+  Giua ⇒ bao cao, khong ket luan (co the mot phan fragment co dummy, mot phan khong).
+* **L4:** in `MolFromSmiles` co parse duoc khong, `MolToSmiles` va `GetNumAtoms`. Khong co nguong —
+  ghi nhan de xac dinh phan tu duoc danh gia tu truoc den nay thuc su la gi.
+
 Ket qua ghi vao **Muc 37**.
