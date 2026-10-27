@@ -290,8 +290,14 @@ class SAMGDataPreprocessor:
                              "frag_frame_stable": f["frag_frame_stable"],
                              "local_coords": local_coords.astype(np.float32),
                              "atomic_nums": f["atomic_nums"]})
+        # Muc 38.6: pocket_R/pocket_t PHAI do chinh step0 ghi. Truoc Rev 20 chung do script
+        # migration `add_pocket_frame_to_pkl.py` (P2a-3) them vao SAU, nen moi lan chay lai step0
+        # la mat ⇒ step6 loi KeyError. R_m_to_w/t_m_to_w da co san ngay tai day va la CUNG mot frame
+        # dung de sinh nhan, nen ghi thang: het ca rui ro lech frame lan buoc migration.
         return {"frame_stable": frame_stable, "frame_diag": frame_diag, "sequence": sequence,
-                "frag_order_mode": frag_order_mode}
+                "frag_order_mode": frag_order_mode,
+                "pocket_R": np.asarray(R_m_to_w, dtype=np.float64),
+                "pocket_t": np.asarray(t_m_to_w, dtype=np.float64)}
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
         holo_pocket_rel, apo_pocket_rel, ligand_rel, _, _, _, _ = entry
