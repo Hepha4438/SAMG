@@ -1520,3 +1520,109 @@ readlink -f ~/SAMG
 python -u src/check_valid_adjacency.py --mmseqs ~/tools/mmseqs/bin/mmseqs 2>&1 | tee logs/m14a_adjacency_seqid.log
 ```
 Ket qua ghi vao **Muc 36**.
+
+---
+
+# PLAN Rev 20 (2026-10-27) — BASELINE truoc, huan luyen lai sau
+
+Can cu: RESEARCH_CONTEXT **Muc 36** (valid 131 cluster) va **Muc 37-pre** (Step 7 co 3-4 loi nang; phep nghich
+dao da xac dinh). Nguoi dung chot muc tieu cuoi = **chat luong phan tu sinh ra**, dong y viet lai step 0-6 khi
+da ro cho nao doi.
+
+**Nguyen tac thu tu (ly do, khong phai so thich):** moi so Vina/QED hien co do chat luong ETKDG chu khong phai
+cua mo hinh (37-pre.2 L1). Huan luyen lai bay gio ⇒ khong doc duoc ket qua. **A truoc, C sau.**
+A va B doc lap, chay song song duoc.
+
+---
+
+## A. Sua Step 7 + do BASELINE cua checkpoint hien tai
+
+### A1. `src/build_fragment_dict.py` (MOI) — tu dien toa do cuc bo cua fragment
+**Nguon:** Frag2Seq muc 3.3.1 — tu dien key = canonical SMILES cua fragment, value = atom types + toa do cuc bo
+trong frame fragment (37-pre.3).
+Duyet lai SDF cua **split train** (khong dung valid/test: tu dien la tham so hoc tu du lieu). Voi moi fragment:
+* dung lai **nguyen van** `LigandProcessor.fragment_ligand_frag2seq` cho toi buoc co `coords_canon` — **import**
+  tu `step0_data_prep`, khong viet lai logic cat/sap (R14). Neu ham khong lo ra `coords_canon`, tach mot ham
+  `_fragment_raw()` trong step0 va goi lai — **khong copy code**.
+* `R_g_to_w, t_g_to_w = _get_local_frame(coords_canon)`; `local = R_g_to_w.T @ (coords_canon - t_g_to_w)`.
+* luu `{smiles: {"atom_types": [...], "local": [n,3], "n_seen": int, "rmsd_spread": float}}`.
+* Voi SMILES xuat hien nhieu lan: giu conformer **dau tien** (quy uoc Frag2Seq), va tinh `rmsd_spread` =
+  RMSD trung binh (sau Kabsch, tren nguyen tu da sap canonical) giua cac lan xuat hien va conformer da giu.
+Luu `dataset/processed/fragment_dict.pkl`.
+
+**Tieu chi doc (ghi cung):**
+* In: so SMILES duy nhat, `%` token cua **valid** co trong tu dien (do phu), phan vi 50/90/99 cua `rmsd_spread`.
+* `rmsd_spread` median **> 0,5 A** ⇒ xap xi "mot conformer moi SMILES" la nguon loi dang ke ⇒ ghi vao bao cao
+  va **khong** quy ket sai lech Vina cho mo hinh. (Nguong 0,5 A: nua cua 1,0 A — nguong RMSD "tai dung thanh cong"
+  cua PoseBusters/ngành docking; **quy uoc du an** suy tu do, R16 muc 3.)
+* Do phu token valid **< 95%** ⇒ bao cao, va moi so Vina chi tinh tren phan tu co **moi** fragment trong tu dien.
+
+### A2. `src/step7_evaluation.py` — viet lai duong dat pose (hang muc B7)
+Sua dung ba loi 37-pre.2:
+1. **Bo ETKDG khoi duong dat pose.** ETKDG **van duoc dung** cho hinh hoc **noi** fragment neu mot SMILES khong co
+   trong tu dien (ghi ro ty le). Dat pose thi dung phep nghich dao 37-pre.3.
+2. **Khong trung binh quaternion.** Moi fragment dat theo **quaternion cua chinh no**.
+3. **Dung frame hoc:** `pocket_R`, `pocket_t` doc tu pkl (da co), **khong** tinh lai (R14), **khong** dung
+   `protein_pos.mean()`.
+4. **Lap rap phan tu:** noi cac fragment tai nguyen tu dummy. Buoc nay chua co dac ta — xem B2 duoi day.
+**Kiem khong-doi bat buoc (R15):** voi **nhan that** cua 20 complex valid (khong phai du doan cua mo hinh), chay
+phep nghich dao roi so voi SDF goc. **`RMSD < 0,5 A` o >= 18/20** ⇒ duong tai dung dung. Khong dat ⇒ **DUNG**,
+phep nghich dao sai, khong doc so Vina nao. (Nguong 0,5 A nhu A1; day la kiem **tai dung**, khong phai do mo hinh.)
+
+### A3. Danh gia theo chuan Apo2Mol
+`--num_samples 5` moi hoc tren **test** (478 entry, 255 sau `frame_stable`), Vina `mode='minimize'`,
+`exhaustiveness=128`. Bao cao **mean va median** cua: Vina min, QED, SA, logP, Lipinski; cong **High Affinity**,
+**Validity**, **Novelty** (Tanimoto <= 0,4, Morgan). Dung tien ich cua `Apo2Mol/utils/evaluation/` (R14).
+**Doi chung bat buoc, ghi cung:** cung bang so cho **ligand tham chieu** cua chinh cac hoc do, va cho
+**nhan that qua duong tai dung A2** (= tran tren cua mo hinh hien tai voi tu dien fragment nay).
+**Khong dat nguong PASS/FAIL cho mo hinh o buoc nay** — day la **baseline**, khong phai phep kiem gia thuyet.
+Ghi so, khong ket luan.
+
+---
+
+## B. Uoc luong sai so theo CUM PROTEIN cho cac ket luan da co
+
+### B1. Cluster bootstrap
+**Nguon:** Field & Welsh (2007), *Bootstrapping clustered data*, JRSS-B 69(3) 369-390 — khi du lieu phan cum,
+bootstrap phai **lay mau lai TOAN BO CUM** (cluster/"pairs" bootstrap), khong lay mau lai quan sat le; lay mau le
+cho khoang tin cay **qua hep**. Cum o day = 131 cluster MMseqs2 30% cua valid (Muc 36.1).
+Ap cho: **A6** (`delta R2` cua P1/P2), **(b2)** (`G_pipe` vs `G_P1`), **quan sat t1** (Muc 35.2).
+Cai dat: hai script M12 in them **du doan va target theo tung complex**; mot script moi
+`src/cluster_bootstrap.py` doc file do + nhan cluster, lay mau lai 131 cluster co hoan lai, **B = 2000** lan,
+bao cao khoang phan vi 2,5%-97,5%.
+**Tieu chi doc (ghi cung):** voi moi ket luan, so khoang bootstrap cum voi khoang ±2sd da dung:
+* Khoang bootstrap **khong chua 0** (hoac khong chua moc so sanh) ⇒ ket luan **giu nguyen**, ghi them khoang moi.
+* Khoang bootstrap **chua 0** trong khi ±2sd thi khong ⇒ ket luan do **[XEM LAI]**: bat dinh theo protein lon hon
+  bat dinh theo lan xao tron.
+* Bao cao ty le `do rong bootstrap / do rong 2sd` cho tung ket luan.
+
+### B2. (nho) Doc cach Frag2Seq lap rap fragment
+Doc phan tai dung trong Frag2Seq PDF (Apx., phan chung minh surjective) de lay dac ta noi nguyen tu dummy.
+Ghi vao Muc 37 truoc khi code A2 buoc 4.
+
+---
+
+## C. Huan luyen lai — CHI sau khi co A3 va B
+Danh sach ung vien (deu dang HOAN, moi muc phai co nguon truoc khi dua vao):
+`P3a-1` (co dinh permutation ARN) · `P3a-3` (mask padding `_ls_sum`) · `C4` (bo `v_context.detach()`) ·
+`N1` (thu tu fragment theo alphabet SMILES — Frag2Seq dung **thu tu xuat hien trong canonical SMILES**, muc 3.2,
+**khac** voi `sort(key=smiles)` cua step0:230 ⇒ co nguon de doi) · **6D rotation** (double cover) ·
+`tau` tuning · `N2` (`updated_protein_pos`).
+**Khong chot gi o Rev 20.** Rev 21 se chot sau khi doc A3 + B.
+
+---
+
+## Lenh server (A1/A2 chua co code — chay khi bao)
+```bash
+cd ~/SAMG && git pull && git log --oneline -3 && git status --short src/ && conda activate samg
+readlink -f ~/SAMG
+# kiem L4 (37-pre.2), vai giay:
+python -c "
+from rdkit import Chem
+s='[1*]N[6*]'+'[3*]C[4*]'
+m=Chem.MolFromSmiles(s); print('concat parse:', m is not None)
+s2=s.replace('*','C'); m2=Chem.MolFromSmiles(s2)
+print('sau replace:', s2, '->', m2 is not None, Chem.MolToSmiles(m2) if m2 else '', m2.GetNumAtoms() if m2 else '')
+"
+```
+Ket qua ghi vao **Muc 37**.
