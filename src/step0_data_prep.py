@@ -216,9 +216,28 @@ class SAMGDataPreprocessor:
         fragmented_mol = Chem.FragmentOnBonds(mol, bonds_to_break,
                                                dummyLabels=[(0, 0)] * len(bonds_to_break))
         frags = Chem.GetMolFrags(fragmented_mol, asMols=True, sanitizeFrags=False)
-        
+
+        # N1 (Muc 37-pre.6, 37.4): thu tu fragment theo Frag2Seq muc 3.2/3.3.1 -- "sort the k fragments
+        # based on the canonical order L(M), specifically by the order of a fragment's first-ranked atom",
+        # tuc theo THU TU XUAT HIEN TRONG CANONICAL SMILES CUA CA PHAN TU. Truoc Rev 20 la
+        # frag_data.sort(key=smiles) (bang chu cai) -- khong co nguon, va khong phan anh lien ket hoa hoc
+        # doc chuoi. FragmentOnBonds noi them cac nguyen tu dummy VAO CUOI, nen atom idx < n_orig anh xa
+        # truc tiep sang chi so nguyen tu cua phan tu goc.
+        n_orig = mol.GetNumAtoms()
+        frag_atom_idx = Chem.GetMolFrags(fragmented_mol, asMols=False)
+        try:
+            orig_ranks = list(Chem.CanonicalRankAtoms(mol))
+            frag_sort_keys = []
+            for idxs in frag_atom_idx:
+                real = [orig_ranks[i] for i in idxs if i < n_orig]
+                frag_sort_keys.append(min(real) if real else 10 ** 9)
+            frag_order_mode = "frag2seq_canonical_appearance"
+        except Exception:
+            frag_sort_keys = [None] * len(frags)
+            frag_order_mode = "fallback_smiles_alphabetical"
+
         frag_data = []
-        for frag in frags:
+        for frag_i, frag in enumerate(frags):
             canonical_smiles = Chem.MolToSmiles(frag, isomericSmiles=True, canonical=True)
             conf = frag.GetConformer()
             coords = np.array([conf.GetAtomPosition(i) for i in range(frag.GetNumAtoms())])
@@ -241,9 +260,16 @@ class SAMGDataPreprocessor:
             atomic_nums = np.array([frag.GetAtomWithIdx(int(i)).GetAtomicNum() for i in order], dtype=np.int16)
             frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon,
                               "atomic_nums": atomic_nums, "center": np.mean(coords, axis=0),
-                              "frag_frame_stable": frag_frame_stable})
+                              "frag_frame_stable": frag_frame_stable,
+                              "sort_key": frag_sort_keys[frag_i]})
 
-        frag_data.sort(key=lambda x: x["smiles"])
+        # N1: sap theo thu tu xuat hien trong canonical SMILES cua ca phan tu; smiles la khoa phu de
+        # tat dinh khi hai fragment co cung first-ranked atom (khong xay ra voi CanonicalRankAtoms
+        # breakTies mac dinh, nhung giu cho chac).
+        if frag_order_mode == "frag2seq_canonical_appearance":
+            frag_data.sort(key=lambda x: (x["sort_key"], x["smiles"]))
+        else:
+            frag_data.sort(key=lambda x: x["smiles"])
 
         pocket_coords, atom_names = self._load_pocket_geometry(apo_pocket_path)
         R_m_to_w, t_m_to_w, frame_stable, frame_diag = self._get_pocket_frame(pocket_coords, atom_names)
@@ -264,7 +290,8 @@ class SAMGDataPreprocessor:
                              "frag_frame_stable": f["frag_frame_stable"],
                              "local_coords": local_coords.astype(np.float32),
                              "atomic_nums": f["atomic_nums"]})
-        return {"frame_stable": frame_stable, "frame_diag": frame_diag, "sequence": sequence}
+        return {"frame_stable": frame_stable, "frame_diag": frame_diag, "sequence": sequence,
+                "frag_order_mode": frag_order_mode}
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
         holo_pocket_rel, apo_pocket_rel, ligand_rel, _, _, _, _ = entry
@@ -294,12 +321,26 @@ class SAMGDataPreprocessor:
             return sequence_7d["frame_stable"], sequence_7d["frame_diag"], frag_flags
         return None, None, None
 
-    def build_global_vocab(self):
-        print("\n[*] Building Global Vocabulary from all processed 7D sequences...")
+    def build_global_vocab(self, train_pli_ids=None):
+        """Rev 20, hai sua doi co can cu:
+        (1) `sorted(glob)` -- truoc day `glob.glob` tra ve theo thu tu he thong tep ⇒ token id KHAC
+            nhau giua cac lan chay/may, tuc tu vung KHONG tai lap duoc. Cung nguyen tac voi P3a-2
+            (seed) va R2: hai run khong so sanh duoc neu dinh danh token khong tat dinh.
+        (2) `train_pli_ids` -- chi dung fragment cua tap TRAIN. Nguon: Frag2Seq muc 3.3.1, "we save
+            each splited fragment FROM THE TRAINING SET into a dictionary". Truoc day tu vung dung ca
+            valid/test ⇒ khong gian dau ra cua mo hinh duoc dinh hinh boi du lieu danh gia.
+            Fragment chi co o valid/test se roi vao [UNK] -- dung nhu khi trien khai that.
+        """
+        print("\n[*] Building Global Vocabulary (sorted, train-only) ...")
         vocab = {"[SOS]": 0, "[UNK]": 1}
-        sequence_files = glob.glob(os.path.join(self.out_dir, "*_sequence_7d.pkl"))
+        sequence_files = sorted(glob.glob(os.path.join(self.out_dir, "*_sequence_7d.pkl")))
+        if train_pli_ids is not None:
+            keep = set(train_pli_ids)
+            sequence_files = [f for f in sequence_files
+                              if os.path.basename(f)[: -len("_sequence_7d.pkl")] in keep]
+            print(f"[*] chi dung {len(sequence_files)} pkl cua tap TRAIN de dung tu vung.")
         if not sequence_files: return None
-            
+
         for file_path in tqdm(sequence_files, desc="Building Vocab", unit="file"):
             with open(file_path, "rb") as f:
                 # Dinh dang pkl da doi (P1c): dict {"frame_stable", "frame_diag", "sequence"}
@@ -348,7 +389,9 @@ if __name__ == "__main__":
             results = list(tqdm(executor.map(worker_process, subset), total=len(subset), desc=f"Processing {split_name}"))
         all_frame_results.extend(results)
 
-    processor.build_global_vocab()
+    # Rev 20: tu vung chi tu tap TRAIN, va duyet tep theo thu tu da sap (xem docstring build_global_vocab).
+    train_pli_ids = [e[2].split("/")[0] for e in splits.get("train", [])]
+    processor.build_global_vocab(train_pli_ids=train_pli_ids)
 
     # P1c: ty le complex co frame_stable=False, tach theo nguyen nhan (n1<tau / n2<tau / thieu nhom nguyen tu)
     valid_results = [(fs, diag, frags) for fs, diag, frags in all_frame_results if fs is not None]
