@@ -2975,3 +2975,70 @@ Frag2Seq muc 3.2/3.3.1: sap theo **thu tu xuat hien trong canonical SMILES cua C
 "the order of a fragment's first-ranked atom". Day la hai thu tu khac nhau: cua Frag2Seq phan anh **lien ket
 hoa hoc doc chuoi**, cua step0 thi khong. ⇒ N1 gio co **nguon** cho ban sua, khong con la "khiem khuyet chua
 biet sua the nao".
+
+---
+
+## 37. Kiem step0/step7 (server, 2026-10-27, HEAD `4274b0c`): 37-pre.5 **XAC NHAN**; L4 xac nhan; cach lap rap da ro
+Log: `logs/m15_step0_tokens.log` (hostname `cuda12`, `git status --short src/` sach).
+
+### 37.1. Token fragment MANG CHI SO NGUYEN TU — xac nhan, muc do nang hon du doan
+```
+V (token fragment)                        = 19.031
+token co dummy dang [N*]                  = 18.822  (98,90%)
+U (duy nhat sau khi [N*] -> [*])          =  5.334
+U / V                                     = 0,2803   < 0,50 => XAC NHAN
+```
+Vi du token: `[3*]CO`, `*C[9*]`, `*[C@@H]1CCCN([25*])C1`.
+**Phan manh tap trung dung vao cac fragment PHO BIEN NHAT:**
+```
+[*]C[*]            -> 672 token      [*]c1ccc([*])cc1 -> 417 token
+[*]C([*])=O        -> 570 token      [*]O[*]          -> 409 token
+[*]N[*]            -> 519 token
+```
+Phan bo so bien the/fragment: `{1: 3593, 2: 688, 3: 292, 4: 165, 5: 115, 6: 85, 7: 49, 8: 51, ...}`.
+⇒ Tu vung **phinh 3,57 lan** (19.031 / 5.334). Cac fragment thuong gap nhat — cau noi methylene, carbonyl, NH,
+phenyl — bi vo thanh hang tram token rieng biet, **chi khac nhau o chi so nguyen tu cua phan tu train**.
+**He qua (suy luan, chua do rieng):** mot phan `Token_Loss ≈ 3,349` la **entropy khong the giam**: ngay ca khi mo
+hinh doan dung fragment hoa hoc, no van phai doan dung bien the chi so. Voi `[*]C[*]`, `ln(672) = 6,51` nat.
+Dieu nay **tuong thich** voi viec `Token_Loss` kho giam va voi ket qua "Token_Loss chu yeu la thong ke chuoi".
+**Chua do:** phan ra `Token_Loss` thanh (entropy chon fragment hoa hoc) + (entropy chon bien the chi so).
+
+### 37.2. L4 xac nhan: phan tu "duoc danh gia" la ghep chuoi ky tu
+```
+parts  = ['[3*]CO', '[4*][C@H]1OC[C@H](O)[C@@H](O)[C@@H]1O']
+ghep   = '[3*]CO[4*][C@H]1OC...'            -> parse OK, 13 nguyen tu
+sau .replace("*","C") = '[3C]CO[4C][C@H]1...' -> parse OK, 13 nguyen tu, 2/13 nguyen tu co isotope != 0
+```
+Chuoi ghep **parse duoc** nen khong he bao loi, nhung phan tu thu duoc la noi duoi hai chuoi SMILES, **khong**
+phai phep lap rap fragment theo hinh hoc; cac nguyen tu dummy thanh carbon dong vi (`[3C]`, `[4C]`).
+⇒ Cong voi L1-L3 (37-pre.2): **moi so Vina/QED/SA/Lipinski cua du an deu vo nghia** — ca ve hinh hoc (ETKDG +
+trung binh quaternion + sai frame) lan ve **thanh phan hoa hoc** (ghep chuoi).
+
+### 37.3. Cach lap rap fragment — GIAI, bang chuan cua nganh (dong Rev 20 B2)
+**Nguon:** `Apo2Mol/eval_split.py:122` goi `reconstruct.reconstruct_from_generated(pred_pos, pred_atom_type,
+pred_aromatic)`; `Apo2Mol/utils/reconstruct.py:455` cai dat bang **OpenBabel bond perception** (suy lien ket tu
+toa do 3D + so hieu nguyen tu). `eval_split.py:246` bao `recon_success` nhu mot chi so.
+⇒ **Khong can bookkeeping nguyen tu dummy de lap rap.** Duong dung:
+```
+7D cua tung fragment --(nghich dao 37-pre.3)--> toa do 3D cua tung nguyen tu trong frame the gioi
+  -> bo nguyen tu dummy -> gom (xyz, atomic_num) cua ca phan tu
+  -> reconstruct_from_generated(...)  [dung code Apo2Mol, R14]  -> RDKit mol -> QED/SA/Vina
+```
+Day cung la ly do **co the bo chi so dummy khoi token ma khong mat gi**: lien ket giua cac fragment duoc suy tu
+**hinh hoc**, khong tu nhan.
+
+### 37.4. Ban sua `step0` da xac dinh
+`step0_data_prep.py:209`: `Chem.FragmentOnBonds(mol, bonds_to_break)` ⇒
+`Chem.FragmentOnBonds(mol, bonds_to_break, dummyLabels=[(0, 0)] * len(bonds_to_break))`.
+Moi dummy thanh `[*]` (isotope 0) ⇒ token = **SMILES hoa hoc thuan**, tu vung `19.031 -> ~5.334`.
+**Bat buoc chay lai `step0` + `compute_scaler.py`** (nhan 7D **khong** doi, nhung tu vung va token id doi hoan
+toan) ⇒ **phai huan luyen lai**. Dieu kien cat cua step0:206 (lien ket don, khong trong vong, bac hai dau > 1)
+**giong het** Frag2Seq muc 3.2 — **khong doi**.
+**Canh bao tai dung (R15):** cache probe `dataset/cache_probe/` chua `target_ids` theo tu vung CU ⇒ **vo hieu**
+sau khi doi; moi ket qua probe (A6, Muc 32-35) gan voi tu vung cu. Nhan 7D va `h_target` khong doi, nhung
+`frag_id` doi ⇒ `tokenmean` va target-encoding phai tinh lai.
+
+### 37.5. Trang thai
+**Duoc ghi:** 37.1 (token mang chi so, tu vung phinh 3,57x), 37.2 (L4), 37.3 (cach lap rap), 37.4 (ban sua step0).
+**He qua ke hoach:** huan luyen lai **bat buoc** (tu vung doi), nhung **van phai sua Step 7 truoc** de co baseline
+doc duoc. Thu tu A -> C cua Rev 20 **giu nguyen**, bo sung ban sua step0 vao C.
