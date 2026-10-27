@@ -2774,3 +2774,69 @@ ung ho (34.2 (3)). Tien de (A6) giu nguyen; so P1 cap nhat.
 **Rut lai / xem lai:** 33.5 (co che sai, 34-pre.3); do lon A5 (can duoi, 34.3); "phep quay khong chiu chi phoi cua
 hoc" (34.3 muc 3); so P1 o 33.1 (34.2 (2)).
 **Chua xac lap:** pipeline khai thac hoc kem hay khong (M12-a khong ket luan). Buoc tiep: Rev 18 (a) va (b).
+
+---
+
+## 35. Rev 18 (server, 2026-10-27, HEAD `ba77e95`): (a) BAC trong pham vi hep; (b) KHONG KET LUAN; R2 cua pipeline KHONG phai R2 chuan
+Logs: `logs/m13a_adjacency.log` (hostname `cuda12.ecs.vuw.ac.nz`), `logs/m13b_probe.log`, `logs/m13b_pipe.log`
+(`--batch-size 8`). Ca ba HEAD `ba77e95`; hai log GPU `device: cuda`, K = 20. So probe/pipeline tai lap M12
+tung chu so (vd `delta_pipe(d, all)` 0,2156 vs 0,2160). **Van thieu:** `readlink -f ~/SAMG`, `git status --short src/`.
+Tu muc nay ap **R16** (moi tieu chi phai co co so hoc thuat — WORKING_RULES muc G).
+
+### 35.1. (a) Ghep cap trong batch: BAC — nhung chi bac dinh nghia TU DAT
+valid: 764 complex, **446 PDB**; phan phoi complex/PDB `{1: 310, 2: 78, 3: 21, 4: 10, 5: 5, 6: 2, 7: 2, 8: 18}`.
+Cap lien ke cung PDB: 0,2818. `s(bs=16)`: cung PDB **0,0839**, cung PDB & tam < 2 A **0,0004** (`s_rand` 0,0000).
+Theo tieu chi ghi cung: `s_pocket(16) < 0,20` ⇒ **BAC**.
+**Pham vi that cua ket qua (R16):** dinh nghia "cung hoc = cung PDB & tam < 2 A" la **quy uoc tu dat, khong co
+nguon nganh**. No bo sot hai truong hop co trong du lieu:
+* 20 entry dau theo thu tu loader deu la ma `5s**` (`5sos`, `5srk`, `5sqj`, ...) — nhieu kha nang mot loat sang loc
+  fragment tren **cung mot protein**, moi cau truc mot ma PDB ⇒ "cung PDB" khong bat duoc.
+* Cung PDB khac chain (`5sqt__1__1.A` vs `5sqt__2__1.B`) ⇒ cung loai hoc nhung tam khac toa do ⇒ "tam < 2 A" bo sot.
+⇒ Chi duoc ghi: **"cung PDB va cung toa do" KHONG phai nguyen nhan M10 do thap.** Gia thuyet "cung protein" **CHUA kiem**.
+Lam lai bang dinh nghia nganh: Rev 19 (a').
+
+### 35.2. (b) Loi ich MSE G: KHONG KET LUAN
+**(b0)** `|G(d) − A(d)|`, tap all: P1 **0,0158 DAT**; P2 **0,0414 KHONG DAT** (G − A > 0 ⇒ `blind` cua P2 du doan tot hon
+phan khong-hoc cua chinh mo hinh `pocket`, tuc `m` cua P2 tuong tac voi dac trung khac; gia dinh cua dong nhat thuc
+khong giu). ⇒ chi P1 vao (b2).
+**(b1)** `|B_mse(d) − B(d)|` = **0,1010 > 0,03** ⇒ chi doc ban MSE. Xem 35.3 — phat hien quan trong nhat.
+**(b2)** tap all (ban MSE): `G_pipe(d)` = **0,0308 ± 0,0126** [0,0055 ; 0,0561]; `G_P1(d)` = **0,0732 ± 0,0128**
+[0,0475 ; 0,0988]. Chong lan (0,0475–0,0561) ⇒ **KHONG KET LUAN** (pipeline nghieng ve thap hon, chua vuot luat 2sd).
+**(b3)** tap t0: `G_pipe` 0,0695 ± 0,0236 vs `G_P1` 0,0355 ± 0,0179 — chong lan, **nguoc chieu** voi all ⇒ verdict cuoi
+**KHONG KET LUAN**.
+**Quan sat, khong phai ket luan:** tap t1 `G_pipe` 0,0236 ± 0,0126 (mean+2sd 0,0488) < `G_P1` 0,0802 ± 0,0143
+(mean−2sd 0,0516). Pipeline thu loi ich tu hoc o fragment dau, it han o cac fragment sau — **tuong thich** voi gia
+thuyet thong tin du thua (context danh tinh fragment truoc thay cho hoc). Chua co tieu chi ghi cung cho dieu nay.
+**(b4)** `G_pipe(qz)` = **0,0303 ± 0,0025** (all), 0,0793 ± 0,0069 (t0) — loi ich MSE that tu hoc cho phep quay;
+cung co 34.3 muc 3. P1 `G(qz)` −0,0060.
+
+### 35.3. R2 cua pipeline o Muc 25–34 KHONG phai he so xac dinh chuan
+He so xac dinh chuan: `R2 = 1 − SS_res/SS_tot` (MSE-based). Du an dung `1 − sigma_bar^2 * E[z^2]` voi
+`sigma_bar = exp(mean log sigma)`, `z_i = (t_i − mu_i)/sigma_i` (A2, Muc 25.2). Hai cai chi trung nhau khi `sigma_i`
+khong doi theo token; khi `sigma_i` thay doi, `E[z^2]` gan trong so `1/sigma_i^2` nen cac token mo hinh tu khai
+"khong chac" (va doan sai) gan nhu khong duoc tinh.
+```
+pipeline, valid, tap all   R2 (du an, A3)   R2 chuan (MSE cua mu)
+d                          0,4095           0,0991     <- tokenmean 0,0670; P1 0,2092; P2 0,2299
+theta                      0,4267           0,2075
+phi                        0,3607           0,2136
+qw                         0,5293           0,3052
+qx                         0,1744           0,1263
+qy                         0,7989           0,5582
+qz                         0,2922           0,1698
+```
+**He qua:**
+1. Nhu mot bo du doan diem, pipeline cho `d` chi **R2 = 0,099** — kem ca hai probe.
+2. **Moi so R2 / delta R2 cua pipeline o A3, A5, Muc 25–34 la dai luong co trong so sigma**, khong phai phuong sai
+   giai thich. Thang dai so `||q||=1` (A4) cung do bang dai luong nay.
+3. **M12-a so lech thuoc do**: probe `1 − MSE`, pipeline co trong so sigma — chenh lech estimator thu hai (them vao 34.3).
+4. Dai luong co trong so sigma **khong vo nghia** — no gan voi NLL, phu hop khi danh gia mot mo hinh mat do. Nhung
+   khong duoc goi la "R2" va khong duoc so voi R2 cua probe.
+⇒ **A2 [RUT LAI — Muc 35.3]**: "R2 = 1 − sigma^2 E[z^2]" khong phai cong thuc R2 dung; no chi dung khi sigma hang.
+
+### 35.4. Trang thai sau Muc 35
+**Duoc ghi:** "cung PDB & cung toa do" khong giai thich M10 (35.1); R2 cua pipeline o Muc 25–34 la dai luong co
+trong so sigma; R2 chuan cua pipeline cho `d` la 0,099 (35.3); loi ich MSE tu hoc cho `qz` > 0 (35.2 (b4)).
+**Rut lai:** A2 (35.3).
+**Chua xac lap:** pipeline thu loi ich tu hoc kem probe hay khong (35.2); vi sao M10 do thap (35.1).
+**Tiep:** Rev 19 (a') — "cung protein" theo chuan nganh.
