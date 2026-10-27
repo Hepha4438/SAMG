@@ -30,26 +30,20 @@ thể còn hiệu lực.
 (trước đó untracked, chỉ có ở local). **Bản gốc là file local**; bản trong Project chỉ là snapshot. **Mục 34-pre và PLAN Rev 17 đã ghi** (2026-10-25, ghi cứng trước M12). Kết quả M12 ghi vào
 **Mục 34**; kế hoạch sau đó là **PLAN Rev 18**.
 
-## Trạng thái (2026-10-26, sau Mục 34)
+## Trạng thái (2026-10-27, sau Mục 35)
 
-1. Nhãn 7D sạch, ghép dữ liệu đúng, rò rỉ ligand đã bịt, **không rò rỉ train/valid/test**, huấn luyện tái lập được.
-2. Mô hình học **ràng buộc `‖q‖=1`** của quaternion (thang đại số, A4).
-3. Hốc protein **có** được dùng. Độ lớn **phụ thuộc cách xáo**: M10 (loader không xáo) `d` ≈ 0,08 là **cận dưới**;
-   xáo loader cho `d` **0,216**, và cả `qz` 0,063 / `qw` 0,050 ⇒ "phép quay không có gì" đang **XEM LẠI** (34.3).
-4. **Tiền đề XÁC NHẬN** (A6): thông tin tư thế có sẵn trong encoder đóng băng. Số công bố (P2, tái lập từng chữ số):
-   `d ≈ 0,100`, `theta ≈ 0,067`, `phi ≈ 0,069`.
-5. **"Pipeline khai thác hốc kém hơn probe": KHÔNG KẾT LUẬN** (M12-a, 34.2). Hai probe nằm hai phía pipeline.
-   Đẳng thức `B − A = Var(m)` được dữ liệu ủng hộ ⇒ B không sạch; đo **lợi ích MSE G** (Rev 18 b).
-6. **Tanh bị loại** (34.1). **C4** xác nhận cấu trúc (tĩnh + khi chạy) nhưng **chưa có bằng chứng gây hại**.
-   Danh sách nghi phạm (C4 / null-sink) **tạm dừng** cho tới khi (b) cho thấy pipeline thực sự thu kém.
+1. Dữ liệu sạch, không rò rỉ, huấn luyện tái lập được.
+2. **Tiền đề XÁC NHẬN** (A6): thông tin tư thế có sẵn trong encoder đóng băng (P2: `d ≈ 0,100`).
+3. Pipeline **có** dùng hốc, cho cả tịnh tiến và một phần phép quay (`qz`: lợi ích MSE 0,030 > 0).
+4. **R² của pipeline dùng từ Mục 25 KHÔNG phải R² chuẩn** (A2 rút lại, 35.3). R² chuẩn cho `d` = **0,099**.
+5. "Pipeline thu lợi ích từ hốc kém probe": **KHÔNG KẾT LUẬN** (M12-a, Rev 18 b). Quan sát: kém hẳn ở t ≥ 1.
+6. Tanh bị loại. C4 xác nhận cấu trúc, chưa có bằng chứng gây hại. Nghi phạm tạm dừng.
+7. **R16** (2026-10-27): mọi tiêu chí phải có cơ sở học thuật — nguồn ở `WORKING_RULES.md` mục G.
 
-## VIỆC KẾ TIẾP: PLAN Rev 18 — (a) và (b)
-Code đã viết bởi trợ lý (WORKING_RULES F). Tiêu chí, lệnh chạy, tên log: **`plan.md` → PLAN Rev 18**. Kết quả → **Mục 35**.
-- **(a)** `check_valid_adjacency.py` — không GPU: các complex liền kề trong valid có chung hốc không (giải thích M10 thấp?).
-- **(b)** chạy lại hai script M12 (K=20) với `Var(m)` và `G = B − Var(m)`; so `G_pipe(d)` với `G_probe(d)`.
-- Còn thiếu từ M12: output `readlink -f ~/SAMG` và `git status --short src/` trên server.
-
-Lịch sử M12 (tiêu chí Rev 16→17, log `m12b_tanh.log` lỡ chạy local 13/10) xem `plan.md` Rev 16–17 và Mục 34-pre/34.
+## VIỆC KẾ TIẾP: PLAN Rev 19 — (a') "cùng protein" theo chuẩn ngành
+Cluster MMseqs2 30% (chuẩn CrossDocked, Frag2Seq/3DMolFormer): các complex liền kề trong valid có cùng protein
+không ⇒ giải thích M10 đo thấp? Cần cài MMseqs2 trên server (lệnh trong Rev 19). Kết quả → **Mục 36**.
+Còn thiếu: output `readlink -f ~/SAMG` và `git status --short src/` trên server.
 
 ## Quyết định dự án (2026-10-01, người dùng đồng ý): KHÔNG viết lại từ đầu
 Mọi bug đã sửa là bug **quy ước miền** (frame, thứ tự quaternion, ghép dữ liệu, mask padding, nhiễu
