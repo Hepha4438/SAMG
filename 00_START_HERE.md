@@ -39,11 +39,25 @@ thể còn hiệu lực.
 5. "Pipeline thu lợi ích từ hốc kém probe": **KHÔNG KẾT LUẬN** (M12-a, Rev 18 b). Quan sát: kém hẳn ở t ≥ 1.
 6. Tanh bị loại. C4 xác nhận cấu trúc, chưa có bằng chứng gây hại. Nghi phạm tạm dừng.
 7. **R16** (2026-10-27): mọi tiêu chí phải có cơ sở học thuật — nguồn ở `WORKING_RULES.md` mục G.
+8. ⚠️ **Mọi số Vina/QED/SA đã có đều VÔ NGHĨA** (Mục 37-pre.2): Step 7 đánh giá hình học của ETKDG,
+   không phải tư thế mô hình dự đoán. Chưa có baseline nào đáng tin.
 
-## VIỆC KẾ TIẾP: PLAN Rev 19 — (a') "cùng protein" theo chuẩn ngành
-Cluster MMseqs2 30% (chuẩn CrossDocked, Frag2Seq/3DMolFormer): các complex liền kề trong valid có cùng protein
-không ⇒ giải thích M10 đo thấp? Cần cài MMseqs2 trên server (lệnh trong Rev 19). Kết quả → **Mục 36**.
-Còn thiếu: output `readlink -f ~/SAMG` và `git status --short src/` trên server.
+## VIỆC KẾ TIẾP: PLAN Rev 20 — baseline TRƯỚC, huấn luyện lại SAU
+
+⚠️ **Mục 37-pre: `step7_evaluation.py` có 3 lỗi nặng ⇒ MỌI số Vina/QED từ trước đến nay vô nghĩa.**
+Tư thế từng fragment bị vứt (ETKDG dựng hình, chỉ áp 1 tịnh tiến + 1 quaternion trung bình cho cả phân tử);
+trung bình quaternion theo thành phần sai toán học; khung quy chiếu không phải frame hốc.
+⇒ **Không huấn luyện lại trước khi sửa Step 7** — sẽ không đọc được là tốt lên hay xấu đi.
+
+- **A** (Rev 20): từ điển fragment (`build_fragment_dict.py`) + viết lại đường đặt pose của Step 7 (hạng mục B7)
+  + đánh giá chuẩn Apo2Mol ⇒ **baseline**. Kiểm không-đổi bắt buộc: tái dựng từ **nhãn thật** phải cho
+  RMSD < 0,5 Å ở ≥ 18/20 complex, nếu không thì dừng.
+- **B** (Rev 20): cluster bootstrap (131 cluster) cho A6, (b2), quan sát t1 — Field & Welsh 2007 (mục G3b).
+- **C**: chốt danh sách sửa step 0–6 rồi huấn luyện lại — **chỉ sau khi có A3 và B**. Rev 21.
+
+Phép nghịch đảo đã xác định đầy đủ (37-pre.3); mắt xích thiếu duy nhất là toạ độ cục bộ của fragment —
+dựng lại được bằng script duyệt SDF, **không** phải chạy lại step0 2,5 giờ.
+Còn thiếu: `readlink -f ~/SAMG`; kiểm L4 (lệnh trong Rev 20).
 
 ## Quyết định dự án (2026-10-01, người dùng đồng ý): KHÔNG viết lại từ đầu
 Mọi bug đã sửa là bug **quy ước miền** (frame, thứ tự quaternion, ghép dữ liệu, mask padding, nhiễu
