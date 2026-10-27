@@ -1,6 +1,6 @@
 # SAMG — Nguyên tắc làm việc (WORKING_RULES)
 
-> 15 quy tắc này (R1–R15, thêm R10b) rút ra từ **9 lần đặt tiêu chí/đặc tả đo sai** trong dự án, ghi ở
+> 16 quy tắc này (R1–R16, thêm R10b) rút ra từ **9 lần đặt tiêu chí/đặc tả đo sai** trong dự án, ghi ở
 > `RESEARCH_CONTEXT.md` các mục 20.11, 23.6, 26.5, 29.8, 31.4, 32.4, 33.5.
 > Vi phạm chúng đã làm mất nhiều ngày và **đình chỉ oan** hai kết luận đúng (Mục 25, M7).
 > Đọc hết trước khi viết tiêu chí đầu tiên.
@@ -56,6 +56,17 @@ Trả lời được câu thứ hai không cho phép tuyên bố câu thứ nh�
 X bao nhiêu*; "huấn luyện có X vs không X" đo *có X thì được thêm bao nhiêu*. Cái sau lớn hơn một
 cách hệ thống kể cả khi không có gì bị làm mất (Mục 33.5).
 
+**R16 — Mọi tiêu chí, định nghĩa, ngưỡng và quyết định phải có cơ sở học thuật** (người dùng quy định
+2026-10-27). Chấp nhận theo thứ tự ưu tiên:
+1. **Định nghĩa/quy ước đã dùng trong ngành**, kèm cite: bài báo (PDF trong Project: Apo2Mol, Frag2Seq,
+   3DMolFormer, báo cáo SBDD; hoặc bài đã xuất bản có link), hoặc **code của công trình trước** lưu ở local
+   (`Apo2Mol/`, `nummolformer/`, `posebusters/`) — ghi rõ file và dòng.
+2. **Đặc tính đo được của chính dữ liệu** — ghi con số, log nguồn, commit.
+3. Nếu không có (1) hoặc (2): ghi rõ **"quy ước của dự án, chưa có cơ sở ngành"** kèm lập luận R5, và coi
+   đó là điểm yếu cần thay khi tìm được nguồn.
+Ví dụ vi phạm đã xảy ra: Rev 18 (a) định nghĩa "cùng hốc" = cùng PDB & tâm < 2 Å — không có nguồn nào
+dùng định nghĩa này; ngành dùng độ trùng chuỗi 30% (MMseqs2) hoặc TM-score hốc (xem G4).
+
 ## C. Tài liệu
 
 **R11 — Không tin bản copy; stage file THẬT, append, commit, rồi ĐỌC LẠI từ máy người dùng để xác
@@ -108,3 +119,33 @@ cd ~/SAMG && git pull && git log --oneline -3 && conda activate samg \
 
 *(Quy tắc cũ, giữ để truy nguồn: Claude Code đọc `plan.md` + `RESEARCH_CONTEXT.md` rồi code; prompt phải
 chỉ rõ mục cần đọc, file được sửa, không chạy script, bẫy đã biết, commit từng việc; không tự đặt ngưỡng.)*
+
+## G. Cơ sở học thuật đã kiểm chứng (R16) — cập nhật khi thêm nguồn
+
+**G1. Hai cách đo tầm quan trọng của một đầu vào (hốc protein)**
+- *Xáo trộn lúc suy luận* (cột B, M10, M12) = **permutation importance / model reliance**: Breiman (2001),
+  *Random Forests*, Machine Learning 45; Fisher, Rudin & Dominici (2019), *All Models are Wrong, but Many are
+  Useful*, JMLR 20(177) — https://www.jmlr.org/papers/v20/18-760.html
+- *Huấn luyện có/không có đầu vào* (cột A, M11) = **LOCO (leave-one-covariate-out)**: Lei et al. (2018),
+  *Distribution-Free Predictive Inference for Regression*, JASA 113(523) — https://arxiv.org/abs/1604.04173
+- **Hai cách này khác nhau một cách hệ thống**: Hooker, Mentch & Zhou, *Unrestricted Permutation Forces
+  Extrapolation* (arXiv:1905.03151; Statistics and Computing 2021). Định lý 1: với mô hình tuyến tính,
+  permutation importance kỳ vọng = 2·β̂²·Σ(x − x̄)², tức **gấp đôi** LOCO khi biến độc lập. Đẳng thức
+  `B − A = Var(m)` ở Mục 34-pre.3 là dạng tổng quát của kết quả này. — https://arxiv.org/abs/1905.03151
+
+**G2. Probe và đối chứng**
+- Linear probe: Alain & Bengio (2016), *Understanding intermediate layers using linear classifier probes*.
+- Đối chứng để biết probe đọc biểu diễn hay tự học thuộc: Hewitt & Liang (2019), *Designing and Interpreting
+  Probes with Control Tasks*, EMNLP — https://arxiv.org/abs/1909.03368 (nhánh `blind`/`tokenmean` cùng tinh thần).
+
+**G3. R²**
+- Hệ số xác định chuẩn: `R² = 1 − SS_res / SS_tot` (MSE-based). Công thức `1 − σ̄²·E[z²]` của dự án (A2)
+  **không phải định nghĩa chuẩn**; nó chỉ trùng R² khi σ không đổi theo token (dữ liệu: log `m13b_pipe.log`, chờ ghi
+  Mục 35; `R2_mse(d)` 0,099 vs 0,41).
+
+**G4. Định nghĩa hốc và độ tương đồng protein trong ngành SBDD**
+- Hốc = mọi residue trong **10 Å** quanh ligand; split theo thời gian của PLINDER; test pocket có
+  **TM-score < 0,35** với mọi train pocket (Zhang & Skolnick 2004): Apo2Mol (PDF trong Project, mục 5 và Apx. A).
+- Split theo **30% độ trùng chuỗi bằng MMseqs2** (CrossDocked2020): Frag2Seq (PDF, phụ lục dữ liệu),
+  3DMolFormer (PDF, "< 30%" độ tương đồng chuỗi).
+
