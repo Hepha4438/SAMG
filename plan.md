@@ -1632,3 +1632,24 @@ python -u src/check_step0_tokens.py 2>&1 | tee logs/m15_step0_tokens.log
   ghi nhan de xac dinh phan tu duoc danh gia tu truoc den nay thuc su la gi.
 
 Ket qua ghi vao **Muc 37**.
+
+---
+
+## A0 (DA CODE, chay truoc A1). Chay lai `step0` voi S1-S4 — ~2,5 gio
+Bon thay doi S1-S4 va **kiem khong-doi K1-K4** ghi cung o RESEARCH_CONTEXT **37.7**. Doc K1-K4 **truoc** khi
+chay bat ky thu gi khac; K1 hoac K3 khong dat ⇒ **DUNG**, S1-S4 da lam doi nhan.
+```bash
+cd ~/SAMG && git pull && git log --oneline -3 && git status --short src/ && conda activate samg
+# BACKUP truoc khi ghi de (plan Phase 1 P1e)
+cp -r dataset/processed dataset/processed_backup_prevocab_$(date +%Y%m%d)
+cp dataset/processed/global_vocab.pkl /tmp/global_vocab_OLD.pkl
+cp dataset/processed/scaler_7d.pt     /tmp/scaler_7d_OLD.pt
+# chay lai step0 (~2,5 gio) + scaler
+python -u src/step0_data_prep.py 2>&1 | tee logs/m16_step0_rerun.log
+python -u src/compute_scaler.py  2>&1 | tee logs/m16_scaler.log
+# K1-K4
+python -u src/check_step0_rerun.py --old-scaler /tmp/scaler_7d_OLD.pt --old-vocab /tmp/global_vocab_OLD.pkl \
+  2>&1 | tee logs/m16_check.log
+```
+Sau khi K1-K4 **dat**: `python -u src/build_fragment_dict.py 2>&1 | tee logs/m16_fragdict.log` (A1).
+Ket qua ghi vao **Muc 38**.
