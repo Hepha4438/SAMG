@@ -1,6 +1,7 @@
 import os
 import glob
 import pickle
+import argparse
 import subprocess
 import torch
 import torch.nn as nn
@@ -423,6 +424,22 @@ if __name__ == "__main__":
     print(f"SEED: {SEED}")
     pl.seed_everything(SEED, workers=True)
 
+    # Muc 40 (Rev 20): TRUOC day script TU DONG resume tu checkpoint moi nhat trong
+    # saved_checkpoints_flow/ ma khong hoi. Sau khi tu vung doi (19.033 -> 3.983, Muc 37.4) dieu
+    # do lam `trainer.fit` NO ngay voi size mismatch. Resume gio phai XIN TUONG MINH (--resume),
+    # va co guard doi chieu vocab_size truoc khi load.
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--geo-head", choices=["maf", "diag_gauss"], default="maf",
+                      help="Mac dinh 'maf': toan bo cong cu do cua du an (measure_pocket_shuffle, "
+                           "measure_logscale_realtokens, recover_arn_permutation) doc "
+                           "geometric_head.arn, chi ton tai o MAF. Doi sang diag_gauss la mot THI "
+                           "NGHIEM rieng (Rev 5 E1), khong gop vao lan nay.")
+    _ap.add_argument("--resume", default=None,
+                      help="duong dan .ckpt de resume, hoac 'auto' lay file moi nhat. Mac dinh: "
+                           "KHONG resume (huan luyen tu dau).")
+    _ap.add_argument("--max-epochs", type=int, default=None)
+    _args = _ap.parse_args()
+
     config = OmegaConf.create({
         "hidden_dim": 256,
         "num_heads": 4,
@@ -435,7 +452,7 @@ if __name__ == "__main__":
         "ligand_mode": "empty",
         # Co chon head doi chung: "diag_gauss" (Gaussian duong cheo, mac dinh) vs "maf"
         # (AutoregressiveFlowLayer, kien truc goc). Xem step4_ligand_generator.py.
-        "geo_head": "diag_gauss",
+        "geo_head": _args.geo_head,
         "protein_encoder": {
             "num_blocks": 3,
             "num_layers": 3,
@@ -501,6 +518,8 @@ if __name__ == "__main__":
     _arn = getattr(model.generator.geometric_head, "arn", None)
     _permutation = getattr(_arn, "permutation", None) if _arn is not None else None
     print(f"geo_head: {config.get('geo_head', 'diag_gauss')}  permutation ARN: {_permutation}")
+    # R2: vocab_size phai in ra de doi chieu. Sau Muc 37.4 phai la ~3.983, KHONG phai 19.033.
+    print(f"vocab_size: {len(vocab)}  (sau Muc 37.4 phai ~3.983; neu 19.033 => dang doc vocab CU, DUNG)")
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(SAMG_ROOT, "saved_checkpoints_flow"),
@@ -516,7 +535,7 @@ if __name__ == "__main__":
     logger = WandbLogger(project="SAMG-Drug-Design", name="sequence_generator_optimized")
     logging_callback = SAMGLoggingCallback(log_dir=os.path.join(SAMG_ROOT, "logs"))
     trainer = pl.Trainer(
-        max_epochs=25,
+        max_epochs=_args.max_epochs if _args.max_epochs else 25,
         accelerator="gpu",           
         devices=1,                   
         precision="32-true",
@@ -532,11 +551,30 @@ if __name__ == "__main__":
 
     ckpt_path = None
     ckpt_dir = os.path.join(SAMG_ROOT, "saved_checkpoints_flow")
-    if os.path.exists(ckpt_dir):
-        ckpts = glob.glob(os.path.join(ckpt_dir, "*.ckpt"))
-        if ckpts:
+    if _args.resume:
+        if _args.resume == "auto":
+            ckpts = glob.glob(os.path.join(ckpt_dir, "*.ckpt")) if os.path.exists(ckpt_dir) else []
+            if not ckpts:
+                raise SystemExit("[!] --resume auto nhung khong co .ckpt nao trong saved_checkpoints_flow/.")
             ckpt_path = max(ckpts, key=os.path.getmtime)
-            print(f"\n[*] Đang khôi phục quá trình huấn luyện từ: {os.path.basename(ckpt_path)}")
+        else:
+            ckpt_path = _args.resume
+            if not os.path.exists(ckpt_path):
+                raise SystemExit(f"[!] Khong thay checkpoint: {ckpt_path}")
+        # Guard (Muc 40): doi chieu vocab_size truoc khi load, de bao loi RO RANG thay vi mot
+        # RuntimeError size-mismatch dai dong giua ruot Lightning.
+        _sd = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+        _w = _sd.get("generator.token_embedding.weight")
+        if _w is not None and _w.shape[0] != len(vocab):
+            raise SystemExit(
+                f"[!] KHONG resume duoc: checkpoint co vocab_size = {_w.shape[0]} nhung vocab hien tai "
+                f"la {len(vocab)} (tu vung da doi o Muc 37.4).\n"
+                f"    Checkpoint nay thuoc ve tu vung CU va khong con dung duoc. Huan luyen tu dau "
+                f"(bo --resume), va chuyen cac .ckpt cu sang thu muc luu tru."
+            )
+        print(f"\n[*] Resume (tuong minh) tu: {os.path.basename(ckpt_path)}")
+    else:
+        print("\n[*] Huan luyen TU DAU (khong resume). Dung --resume <path|auto> neu muon tiep tuc.")
 
     print("\n[*] Starting Optimized SAMG Training...")
     
