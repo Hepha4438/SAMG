@@ -29,14 +29,19 @@ Mục 25.4.
 `phi` 0,391346/1,759804 · `qw` 0,200377/0,456459 · `qx` 0,204276/0,458135 ·
 `qy` 0,201783/0,457270 · `qz` 0,185659/0,464332.
 
-### A2. Công thức R² — dùng sai là lỗi đã xảy ra
+### A2. Công thức R² — [RÚT LẠI một phần — Mục 35.3]
+> ⚠️ `1 − σ̄²·E[z²]` **không phải R² chuẩn** (`1 − SS_res/SS_tot`). Nó chỉ trùng R² khi σ không đổi theo token;
+> với pipeline thì không (R² chuẩn của `d` = **0,099**, công thức dưới cho 0,41). Phần đúng còn giữ: `1 − σ²` mù với
+> hiệu ứng ở `μ`. Mọi R²/ΔR² của pipeline ở A3, A4, A5 và Mục 25–34 là **đại lượng có trọng số σ**.
 ```
 R² = 1 − σ² · E[z²]        với z = (target − μ)/σ ;  KHÔNG phải 1 − σ²
 ```
 `1 − σ²` chỉ đo **độ không chắc chắn mô hình tự khai báo**. Xáo trộn hốc làm `μ` sai mà hầu như
 không đổi `σ`, nên `1 − σ²` **mù** với hiệu ứng cần đo (Mục 25.2).
 
-### A3. Pipeline hiện tại (MAF, checkpoint `periodic-epoch=024.ckpt`), R² đúng trên valid
+### A3. Pipeline hiện tại (MAF, checkpoint `periodic-epoch=024.ckpt`), đại lượng có trọng số σ trên valid
+**R² chuẩn (MSE của μ, Mục 35.3):** `d` **0,099** · `theta` 0,208 · `phi` 0,214 · `qw` 0,305 · `qx` 0,126 · `qy` 0,558 · `qz` 0,170.
+Dòng dưới là đại lượng có trọng số σ (công thức A2), giữ để truy nguồn:
 `d` 0,4195 · `theta` 0,4286 · `phi` 0,3608 · `qw` 0,5318 · `qx` 0,1745 · `qy` 0,7938 · `qz` 0,2923
 (Mục 30.1. Đã **tái lập** độc lập qua hai run — lần đầu trong dự án.)
 
@@ -119,6 +124,10 @@ dùng **lợi ích MSE `G = B − Var(m)`** (Rev 18 b).
 B(d) tập all: P1 0,157 ± 0,014 · pipeline 0,216 ± 0,018 · P2 0,311 ± 0,020. Tập t0: P1 0,124 · P2 0,290 · pipeline 0,360.
 Tanh: `|out| > 0,99` = 0,00%, `max|pre-act|` = 1,91.
 
+### A6d. Rev 18 (Mục 35)
+(b) lợi ích MSE `G(d)`: pipeline 0,031 ± 0,013 vs P1 0,073 ± 0,013 ⇒ **không kết luận** (P2 trượt (b0)).
+t1: pipeline 0,024 < P1 0,080 (quan sát). `G_pipe(qz)` = 0,030 ± 0,003 > 0.
+
 ### A7b. Kết luận cấu trúc C4 (đọc code tĩnh, HEAD `eb32820`, Mục 34-pre.2; xác nhận khi chạy 34.1)
 Mọi đường `h_target → geometric_head` đi qua `v_context.detach()` (`step4:99`). Gradient `Geo_Loss` dừng
 tại `geo_in_proj`/`geometric_head` ⇒ **attention hub chỉ được huấn luyện bởi token loss**; encoder bởi
@@ -156,6 +165,8 @@ token + pocket loss. Input của `ar_decoder` chỉ có danh tính token, **khô
 | "`qy` thoái hoá trong dữ liệu" | đồng nhất với `qw/qx/qz` ở mọi thống kê | 21.1 |
 | "Pipeline đang làm mất tín hiệu" | **chưa có căn cứ** — đang so hai estimator khác nhau. ⚠️ Cơ chế mà 33.5 viện dẫn cũng sai: cùng một mô hình thì Δ inference-shuffle ≥ Δ train-ablation (34-pre.3, dữ liệu ủng hộ 34.2) | **33.5**, 34-pre.3, 34.2 |
 
+| "R² = 1 − σ²·E[z²]" là R² đúng (A2) | chỉ đúng khi σ hằng; pipeline `d`: 0,41 vs R² chuẩn 0,099 | 35.3 |
+| Rev 18 (a) "thứ tự loader không phải nguyên nhân" | chỉ bác định nghĩa tự đặt (cùng PDB & tâm < 2 Å) | 35.1 |
 | "Tanh bão hoà là nghẽn" (20.8, nghi phạm #1 Rev 16) | `|tanh_out| > 0,99` = 0,00% | 34.1 |
 | "Phép quay không chịu chi phối của hốc" (A5, 33.2) | **[XEM LẠI]** — xáo mạnh cho `qz` 0,063, `qw` 0,050; P2 `A(qz)` = 0,05 | 34.3 |
 | Độ lớn `d` ≈ 0,08 (M10, A5) là "mức pipeline dùng hốc" | cận dưới, phụ thuộc cách xáo (0,216 khi xáo loader) | 34.3 |
