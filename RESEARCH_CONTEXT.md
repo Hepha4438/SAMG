@@ -2869,3 +2869,84 @@ theo cum (PLAN Rev 20).
 Moi phep xao tron hoc ve sau phai xao **tren toan tap** (hoac loader `shuffle=True`), khong duoc xao trong batch cua
 loader `shuffle=False`: o thu tu do ~50% cap trong batch la cung protein.
 A5 (cac so M10) ⇒ **[BI KEO THAP — Muc 36]** do ghep cung protein trong batch.
+
+---
+
+## 37-pre. Ra soat Step 7 + chuan danh gia (2026-10-27, HEAD `88f5cc3`, doc code + PDF, KHONG chay gi)
+**Khong co so lieu moi.** Ghi truoc khi sua code, theo R16 (moi lua chon kem nguon).
+Bo canh: nguoi dung chot muc tieu cuoi la **chat luong phan tu sinh ra**, va dong y viet lai step 0-6 khi
+da xac dinh ro cho nao can doi.
+
+### 37-pre.1. Chuan danh gia cua nganh (nguon: Apo2Mol PDF + code `Apo2Mol/eval_split.py`)
+Sau chi so chinh (Apo2Mol, muc "Evaluation Metrics"): **Vina min**, **QED** (Bickerton 2012), **SA**
+(Ertl & Schuffenhauer 2009), **logP**, **Lipinski**, **High Affinity** (% ligand sinh ra co ai luc tot hon
+ligand tham chieu). Moi chi so tru High Affinity bao **ca mean va median**.
+Phu luc C.1 them **Validity** va **Novelty** (Tanimoto <= 0,4 tren Morgan fingerprint).
+Chi tiet thuc thi lay tu code ho:
+* `eval_split.py:54` `--docking_mode vina_score`; `:55` `--exhaustiveness 128`; `:204` chay `mode='minimize'`
+  ⇒ **Vina min** = minimize roi lay affinity (khong phai `score_only`, khong phai `dock`).
+* `sample_split.py:266` `--num_samples 5` ⇒ **5 phan tu moi hoc**.
+* Tien ich dung lai duoc (R14): `Apo2Mol/utils/evaluation/scoring_func.py` (QED/SA/Lipinski),
+  `docking_vina.py` (VinaDockingTask), `similarity.py` (Novelty), `analyze.py`.
+* Lipinski (Apo2Mol Apx.): MW < 500; HBD <= 5; HBA <= 10; logP trong [-2, 5]; (dieu 5 o PDF).
+
+### 37-pre.2. BA LOI NANG trong `src/step7_evaluation.py` — moi so Vina/QED tu truoc den nay VO NGHIA
+**(L1) Tu the mo hinh du doan gan nhu bi vut bo.** Dong 373 goi `AllChem.EmbedMolecule(mol, ETKDG())` dung
+hinh hoc 3D, roi dong 385-388 **gop** ca chuoi 7D thanh **mot** tinh tien `pred_coords.mean(axis=0)` va **mot**
+phep quay `pred_quats.mean(axis=0)` ap cho **toan** phan tu. Tu the RIENG cua tung fragment — chinh thu mo hinh
+hoc — khong duoc dung. ⇒ Vina do chat luong cua **ETKDG**, khong phai cua mo hinh. (Day la hang muc **B7**, hoan
+tu plan Rev 4.)
+**(L2) Trung binh quaternion theo tung thanh phan la sai toan hoc.** Dong 387-389:
+`mean_quat = pred_quats.mean(axis=0)` roi chuan hoa. Quaternion nam tren mat cau don vi trong SO(3); trung binh
+so hoc **khong** la phep trung binh tren nhom quay. Nang hon: do **double cover** (`q` va `-q` cung mot phep quay,
+muc D), hai quaternion nguoc dau **triet tieu** nhau. Phep trung binh dung: vector rieng ung voi tri rieng lon
+nhat cua `sum q_i q_i^T` (Markley et al. 2007, *Averaging Quaternions*, JGCD 30(4)) — nhung xem (L1): **khong nen
+trung binh gi ca**.
+**(L3) Khung quy chieu sai.** Dong 330 `pocket_center = batch.protein_pos.mean(dim=0)`; dong 386
+`ai_predicted_center = pocket_center + pred_coords.mean(axis=0)`. Nhan duoc sinh trong **frame hoc**
+(`pocket_R`, `pocket_t` — P1b/P2a), **khong** phai frame the gioi goc o trung binh toa do protein. Thieu han phep
+quay `R_m_to_w`, va goc sai (`protein_pos.mean()` != `pocket_t` = `pocket_coords.mean(0)`, hai tap nguyen tu khac
+nhau).
+**(L4, can kiem tren server) Chuoi SMILES duoc GHEP CHUOI KY TU.** Dong 364:
+`smi = "".join([inv_vocab[tid] ...])` roi `.replace("*", "C")`. Token la SMILES **cua tung fragment** co nguyen tu
+dummy (vd `[1*]N[6*]`). Ghep chuoi hai fragment cho `[1*]N[6*][3*]C[4*]`, sau replace thanh `[1C]N[6C][3C]C[4C]`
+— RDKit **co the** parse (`[1C]` = carbon dong vi 1) nhung phan tu thu duoc khong lien quan den phep lap rap
+fragment. **Kiem tren server:** parse chuoi vi du nay va in `MolToSmiles` + `GetNumAtoms`.
+⇒ **Khong co baseline dang tin.** Phai sua Step 7 **truoc** khi huan luyen lai, neu khong se khong doc duoc
+huan luyen lai tot len hay xau di.
+
+### 37-pre.3. Tai dung khong can ETKDG LA KHA THI — phep nghich dao da xac dinh day du
+**Nguon:** Frag2Seq muc 3.3.1 (PDF): "we save each splited fragment from the training set into a dictionary with
+the key to be the canonical SMILES of each fragment and the value to be the atom types and atom local coordinates
+in each fragment under the associated fragment local frame"; Dinh ly surjective (Apx.): tu chuoi
+`[d, θ, φ, quaternion]` **tai dung duy nhat** phan tu 3D, sai khac mot phep bien doi SE(3). Bo 7 so cua du an
+**chinh la** bieu dien do.
+**Phep thuan trong `step0_data_prep.py:236-242`:**
+```
+rel_center = R_m_to_w.T @ (center_world - t_m_to_w);  (d, θ, φ) = spherical(rel_center)
+R_g_to_w, t_g_to_w = _get_local_frame(coords_canon)     # t_g_to_w = coords_canon[0], KHONG phai centroid
+R_g_to_m = R_m_to_w.T @ R_g_to_w;  (qx,qy,qz,qw) = R.from_matrix(R_g_to_m).as_quat()
+```
+**Phep nghich dao (day du, tat dinh):**
+```
+rel_center = [d sinθ cosφ, d sinθ sinφ, d cosθ]        # dung voi _get_spherical_coords (dong 187-192)
+center_world = R_m_to_w @ rel_center + t_m_to_w        # R_m_to_w = pocket_R, t_m_to_w = pocket_t (CO trong pkl)
+R_g_to_w = R_m_to_w @ R_g_to_m
+atom_world = R_g_to_w @ (local_coords - centroid_local) + center_world
+```
+voi `local_coords = R_g_to_w^T @ (coords_canon - coords_canon[0])` cua fragment do.
+**Thieu mat xich duy nhat:** `local_coords` **KHONG duoc luu**. pkl chi co
+`{frame_stable, frame_diag, sequence, pocket_R, pocket_t}`, moi item sequence chi co
+`{smiles, spatial_tokens, frag_frame_stable}` (kiem tren server 2026-10-27). Nhung `coords_canon` **duoc tinh** o
+`step0:223` roi vut ⇒ dung lai bang mot script duyet lai SDF, **khong** phai chay lai step0 2,5 gio.
+**Xap xi phai ghi ro:** mot SMILES fragment co the co nhieu conformer khac nhau giua cac phan tu; tu dien luu
+**mot** conformer cho moi SMILES (dung nhu Frag2Seq lam). Day la xap xi cua **ca Frag2Seq**, khong phai cua rieng
+du an — nhung van phai do: bao cao RMSD noi-fragment giua conformer trong tu dien va conformer that.
+**Con lai chua giai:** noi cac fragment tai nguyen tu dummy de ra phan tu lien thong (can cho QED/SA/Vina).
+Frag2Seq co lam; chi tiet chua doc. Xem Rev 20 B2.
+
+### 37-pre.4. Trang thai
+**Duoc ghi:** chuan danh gia + chi tiet thuc thi (37-pre.1); ba loi L1-L3 trong Step 7 (37-pre.2); phep nghich
+dao day du va mat xich thieu (37-pre.3).
+**Can kiem tren server:** L4.
+**He qua cho ke hoach:** **Step 7 phai sua TRUOC khi huan luyen lai.** Xem PLAN Rev 20.
