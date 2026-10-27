@@ -206,7 +206,15 @@ class SAMGDataPreprocessor:
         bonds_to_break = [bond.GetIdx() for bond in mol.GetBonds() if bond.GetBondType() == Chem.BondType.SINGLE and not bond.IsInRing() and bond.GetBeginAtom().GetDegree() > 1 and bond.GetEndAtom().GetDegree() > 1]
         if not bonds_to_break: return None
             
-        fragmented_mol = Chem.FragmentOnBonds(mol, bonds_to_break)
+        # Muc 37.1/37.4: KHONG truyen dummyLabels thi RDKit gan isotope cua nguyen tu dummy =
+        # CHI SO NGUYEN TU cua dau kia lien ket bi cat ⇒ cung mot fragment hoa hoc o hai phan tu
+        # khac nhau cho HAI token khac nhau. Do duoc: U/V = 0,2803 (19.031 token cho 5.334 fragment
+        # hoa hoc; rieng '[*]C[*]' co 672 bien the). dummyLabels=(0,0) cho moi lien ket ⇒ moi dummy
+        # thanh [*] ⇒ token la SMILES HOA HOC thuan. Lien ket giua cac fragment KHONG can nhan nay:
+        # Step 7 suy lai tu hinh hoc qua reconstruct_from_generated (Apo2Mol utils/reconstruct.py,
+        # Muc 37.3), dung chuan cua nganh.
+        fragmented_mol = Chem.FragmentOnBonds(mol, bonds_to_break,
+                                               dummyLabels=[(0, 0)] * len(bonds_to_break))
         frags = Chem.GetMolFrags(fragmented_mol, asMols=True, sanitizeFrags=False)
         
         frag_data = []
@@ -220,12 +228,20 @@ class SAMGDataPreprocessor:
                     g.UpdatePropertyCache(strict=False)
                     Chem.FastFindRings(g)
                     ranks = list(Chem.CanonicalRankAtoms(g, breakTies=True))
-                    coords_canon = coords[np.argsort(ranks)]
+                    order = np.argsort(ranks)
+                    coords_canon = coords[order]
                     frag_frame_stable = True
                 except Exception:
+                    order = np.arange(frag.GetNumAtoms())
                     coords_canon = coords
                     frag_frame_stable = False
-            frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon, "center": np.mean(coords, axis=0), "frag_frame_stable": frag_frame_stable})
+            # Muc 37-pre.3: so hieu nguyen tu theo CUNG hoan vi canonical voi coords_canon. Dummy co
+            # atomic_num = 0 -- giu lai de chi so khop coords_canon; Step 7 bo chung truoc khi
+            # reconstruct_from_generated.
+            atomic_nums = np.array([frag.GetAtomWithIdx(int(i)).GetAtomicNum() for i in order], dtype=np.int16)
+            frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon,
+                              "atomic_nums": atomic_nums, "center": np.mean(coords, axis=0),
+                              "frag_frame_stable": frag_frame_stable})
 
         frag_data.sort(key=lambda x: x["smiles"])
 
@@ -239,7 +255,15 @@ class SAMGDataPreprocessor:
             R_g_to_w, t_g_to_w = self._get_local_frame(f["coords_canon"])
             R_g_to_m = np.dot(R_m_to_w.T, R_g_to_w)
             qx, qy, qz, qw = R.from_matrix(R_g_to_m).as_quat()
-            sequence.append({"smiles": f["smiles"], "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)], "frag_frame_stable": f["frag_frame_stable"]})
+            # Muc 37-pre.3: toa do nguyen tu trong FRAME FRAGMENT. Day la mat xich con thieu de tai
+            # dung phan tu 3D ma KHONG can ETKDG (Frag2Seq muc 3.3.1). Truoc Rev 20 bi tinh roi vut.
+            # Nghich dao o Step 7: atom_world = R_m_to_w @ R_g_to_m @ (local - local.mean(0)) + center_world
+            local_coords = np.dot(R_g_to_w.T, (f["coords_canon"] - t_g_to_w).T).T
+            sequence.append({"smiles": f["smiles"],
+                             "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)],
+                             "frag_frame_stable": f["frag_frame_stable"],
+                             "local_coords": local_coords.astype(np.float32),
+                             "atomic_nums": f["atomic_nums"]})
         return {"frame_stable": frame_stable, "frame_diag": frame_diag, "sequence": sequence}
 
     def process_system(self, system_name, scenario_type, entry, verbose=False):
