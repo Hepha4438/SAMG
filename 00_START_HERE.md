@@ -7,7 +7,7 @@ thể còn hiệu lực.
 ## Thứ tự đọc
 1. **File này** — trạng thái, môi trường, việc kế tiếp.
 2. **`RESULTS_LEDGER.md`** — mọi con số đã xác lập (phần A), đã rút lại (B), đã huỷ (C), đang hoãn (D).
-3. **`WORKING_RULES.md`** — 15 quy tắc rút ra từ 9 lần đặt tiêu chí sai. Đọc hết **trước khi** viết
+3. **`WORKING_RULES.md`** — 16 quy tắc (R16: mọi tiêu chí phải có cơ sở học thuật, nguồn ở mục G). Đọc hết **trước khi** viết
    tiêu chí đầu tiên.
 4. **`plan.md`** — chỉ đọc **PLAN Rev mới nhất** ở cuối file (hiện **Rev 18**), trừ khi cần truy nguồn.
 5. **`RESEARCH_CONTEXT.md`** — ~2.800 dòng. **Không đọc tuần tự.** Chỉ tra khi cần chi tiết một mục
