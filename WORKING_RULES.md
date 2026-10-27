@@ -143,9 +143,31 @@ chỉ rõ mục cần đọc, file được sửa, không chạy script, bẫy �
   **không phải định nghĩa chuẩn**; nó chỉ trùng R² khi σ không đổi theo token (dữ liệu: log `m13b_pipe.log`, chờ ghi
   Mục 35; `R2_mse(d)` 0,099 vs 0,41).
 
+**G3b. Bootstrap khi dữ liệu phân cụm**
+- Field & Welsh (2007), *Bootstrapping clustered data*, JRSS-B 69(3) 369–390: phải lấy mẫu lại **toàn bộ cụm**;
+  lấy mẫu lại quan sát lẻ cho khoảng tin cậy quá hẹp. Cụm ở SAMG = cluster MMseqs2 30% (Mục 36.1: valid có 131).
+
+**G3c. Trung bình quaternion**
+- Markley, Cheng, Crassidis & Oshman (2007), *Averaging Quaternions*, J. Guidance Control Dynamics 30(4):
+  trung bình đúng = vector riêng ứng với trị riêng lớn nhất của `Σ qᵢqᵢᵀ`. Trung bình số học theo thành phần
+  (step7 cũ, Mục 37-pre.2 L2) sai, và bị triệt tiêu do double cover `q ~ −q`.
+
 **G4. Định nghĩa hốc và độ tương đồng protein trong ngành SBDD**
 - Hốc = mọi residue trong **10 Å** quanh ligand; split theo thời gian của PLINDER; test pocket có
   **TM-score < 0,35** với mọi train pocket (Zhang & Skolnick 2004): Apo2Mol (PDF trong Project, mục 5 và Apx. A).
 - Split theo **30% độ trùng chuỗi bằng MMseqs2** (CrossDocked2020): Frag2Seq (PDF, phụ lục dữ liệu),
   3DMolFormer (PDF, "< 30%" độ tương đồng chuỗi).
+
+**G5. Đánh giá chất lượng phân tử sinh ra (chuẩn SBDD)**
+- Sáu chỉ số của Apo2Mol (PDF, "Evaluation Metrics"): Vina min, QED (Bickerton 2012), SA (Ertl & Schuffenhauer
+  2009), logP, Lipinski, High Affinity; báo cả mean và median. Phụ lục C.1 thêm Validity, Novelty
+  (Tanimoto ≤ 0,4, Morgan fingerprint).
+- Thực thi (code `Apo2Mol/eval_split.py`): Vina `mode='minimize'`, `--exhaustiveness 128` (dòng 55, 204);
+  `--num_samples 5` mỗi hốc (`sample_split.py:266`). Tiện ích dùng lại: `utils/evaluation/scoring_func.py`,
+  `docking_vina.py`, `similarity.py`.
+
+**G6. Tái dựng phân tử 3D từ biểu diễn fragment + pose (không cần ETKDG)**
+- Frag2Seq mục 3.3.1 + phụ lục (chứng minh surjective): lưu từ điển {canonical SMILES fragment → atom types +
+  toạ độ cục bộ trong frame fragment}; từ chuỗi `[d, θ, φ, quaternion]` tái dựng **duy nhất** phân tử 3D, sai khác
+  một phép biến đổi SE(3). Phép nghịch đảo cụ thể cho SAMG: Mục 37-pre.3.
 
