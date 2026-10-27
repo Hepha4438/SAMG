@@ -3042,3 +3042,35 @@ sau khi doi; moi ket qua probe (A6, Muc 32-35) gan voi tu vung cu. Nhan 7D va `h
 **Duoc ghi:** 37.1 (token mang chi so, tu vung phinh 3,57x), 37.2 (L4), 37.3 (cach lap rap), 37.4 (ban sua step0).
 **He qua ke hoach:** huan luyen lai **bat buoc** (tu vung doi), nhung **van phai sua Step 7 truoc** de co baseline
 doc duoc. Thu tu A -> C cua Rev 20 **giu nguyen**, bo sung ban sua step0 vao C.
+
+### 37.6. Hai loi them o `build_global_vocab` (doc code, sua cung luc voi 37.4)
+1. **Tu vung KHONG tai lap duoc.** `step0:327` dung `glob.glob(...)` **khong sap**; thu tu tra ve phu thuoc he
+   thong tep ⇒ **token id khac nhau giua cac lan chay/may**. Cung nguyen tac voi P3a-2 (seed) va R2: hai run
+   khong so sanh duoc neu dinh danh token khong tat dinh. ⇒ `sorted(glob.glob(...))`.
+2. **Tu vung dung ca valid/test.** Vong lap duyet **moi** `*_sequence_7d.pkl`. Nguon cho ban sua: Frag2Seq muc
+   3.3.1 — "we save each splited fragment **from the training set** into a dictionary". Khong gian dau ra cua mo
+   hinh khong duoc dinh hinh boi du lieu danh gia; fragment chi co o valid/test phai roi vao `[UNK]`, dung nhu
+   khi trien khai that. ⇒ `build_global_vocab(train_pli_ids=...)`.
+**Luu y khi doc ket qua ve sau:** `[UNK]` tren valid/test se **tang** so voi truoc. Do la dung, khong phai hoi quy.
+
+### 37.7. Bon thay doi cua Rev 20 o `step0` + kiem khong-doi ghi cung TRUOC khi chay lai
+| # | Thay doi | Nguon |
+|---|---|---|
+| S1 | `dummyLabels=[(0,0)] * n` | 37.1 (do duoc U/V = 0,2803) + Frag2Seq 3.3.1 (key = SMILES hoa hoc) |
+| S2 | Luu `local_coords`, `atomic_nums` | Frag2Seq 3.3.1; phep nghich dao 37-pre.3 |
+| S3 | N1: thu tu fragment theo canonical SMILES cua **ca phan tu** | Frag2Seq muc 3.2/3.3.1 ("first-ranked atom") |
+| S4 | `sorted(glob)` + vocab chi tu **train** | 37.6 |
+**S1-S4 KHONG doi gia tri nhan 7D** (cung fragment, cung pose; chi doi **nhan dummy**, **thu tu**, va **tu vung**).
+⇒ **Kiem khong-doi (R15), ghi cung TRUOC khi chay:**
+* **K1 — scaler:** `scaler_7d.pt` moi phai khop ban cu trong **sai so tuong doi 1e-4** o ca 14 so
+  (`d 5,161378/2,478297 · theta 1,531624/0,664945 · phi 0,391346/1,759804 · qw 0,200377/0,456459 ·
+  qx 0,204276/0,458135 · qy 0,201783/0,457270 · qz 0,185659/0,464332`, A1). Sai so 1e-4 (khong phai 0) vi doi
+  **thu tu cong** do S3 ⇒ lech dau phay dong. **Khong khop ⇒ S1-S4 da lam doi nhan ⇒ DUNG, tim loi.**
+* **K2 — tu vung:** `len(vocab)` moi phai `<= 5.336` (= 5.334 fragment hoa hoc do duoc o 37.1, + `[SOS]`,
+  `[UNK]`) va `>= 3.500` (train la ~92% so phan tu). Ngoai khoang ⇒ bao cao truoc khi di tiep.
+* **K3 — so complex:** `frame_stable` phai giu **17.200 / 764 / 255** (A1). Doi ⇒ S1-S4 da cham vao frame hoc,
+  **DUNG**.
+* **K4 — truong moi:** moi item `sequence` phai co `local_coords` (shape `[n,3]`) va `atomic_nums` (shape `[n]`)
+  cung do dai; `frag_order_mode == "frag2seq_canonical_appearance"` o ~100% file.
+**Mat hieu luc sau khi chay lai:** `dataset/cache_probe/` (chua `target_ids` theo tu vung cu) ⇒ moi ket qua probe
+Muc 32-35 (ke ca A6) gan voi tu vung cu. `*_protein_transforms.pt` **khong** anh huong (frame hoc khong doi).
