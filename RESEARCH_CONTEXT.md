@@ -2840,3 +2840,32 @@ trong so sigma; R2 chuan cua pipeline cho `d` la 0,099 (35.3); loi ich MSE tu ho
 **Rut lai:** A2 (35.3).
 **Chua xac lap:** pipeline thu loi ich tu hoc kem probe hay khong (35.2); vi sao M10 do thap (35.1).
 **Tiep:** Rev 19 (a') — "cung protein" theo chuan nganh.
+
+---
+
+## 36. Rev 19 (a') (server, 2026-10-27, HEAD `88f5cc3`): TUONG THICH — ghep cung protein giai thich ~78% su do thap cua M10
+Log: `logs/m14a_adjacency_seqid.log` (hostname `cuda12`, `git status --short src/` sach — chi file untracked).
+MMseqs2 `easy-cluster --min-seq-id 0.3` (version `503743960fc5...`), chuoi = chain chinh cua hoc 10 A; do dai chuoi
+min 36 / median 300 / max 1724, khong chuoi nao < 20 aa.
+```
+min-seq-id   n_cluster   s(bs=16)   s(bs=8)   s_rand
+0,30         131         0,4951     0,5999    0,0543
+0,95         164         0,4794     0,5830    0,0497   (quy uoc du an)
+```
+`s_seq30(16) = 0,4951` trong `[0,446 ; 0,823]` ⇒ **TUONG THICH** (tieu chi Rev 19, nguong suy tu du lieu).
+Du doan `delta_M10 = (1 − 0,4951) × 0,2156 = 0,1089`; thuc do 0,0751–0,0824 ⇒ co che nay giai thich
+`(0,2156 − 0,1089)/(0,2156 − 0,0788) ≈ 78%` chenh lech. Phan con lai (~0,03) chua ro nguon.
+Nguong 0,95 cho gan nhu cung `s` ⇒ cac cap cung cluster phan lon la protein **gan trung chuoi hoan toan** (cac loat
+sang loc fragment `5s**`, `7fr*/7fs*`).
+**Gioi han:** gia dinh "cap cung protein cho delta ≈ 0" van la quy uoc du an (R16 muc 3), chua do nhan qua.
+
+### 36.1. Dac tinh du lieu moi: valid chi co 131 cluster protein (30%)
+764 complex, 446 PDB, **131 cluster MMseqs2 30%**. Moi khoang ± 2sd o Muc 33–35 chi do dao dong **giua cac lan xao
+tron** (hoac giua cac token), **khong** do bat dinh do chon protein. Voi suy rong sang hoc moi, so mau doc lap hieu
+dung gan **131** hon 764 ⇒ cac ket luan dua tren valid (ke ca A6) co the kem chac hon da ghi. Can uoc luong sai so
+theo cum (PLAN Rev 20).
+
+### 36.2. Quy tac moi rut ra (dac tinh du lieu, R16 muc 2)
+Moi phep xao tron hoc ve sau phai xao **tren toan tap** (hoac loader `shuffle=True`), khong duoc xao trong batch cua
+loader `shuffle=False`: o thu tu do ~50% cap trong batch la cung protein.
+A5 (cac so M10) ⇒ **[BI KEO THAP — Muc 36]** do ghep cung protein trong batch.
