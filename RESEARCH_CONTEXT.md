@@ -3074,3 +3074,58 @@ doc duoc. Thu tu A -> C cua Rev 20 **giu nguyen**, bo sung ban sua step0 vao C.
   cung do dai; `frag_order_mode == "frag2seq_canonical_appearance"` o ~100% file.
 **Mat hieu luc sau khi chay lai:** `dataset/cache_probe/` (chua `target_ids` theo tu vung cu) ⇒ moi ket qua probe
 Muc 32-35 (ke ca A6) gan voi tu vung cu. `*_protein_transforms.pt` **khong** anh huong (frame hoc khong doi).
+
+---
+
+## 38. Rev 20 A0 + A1 (server, 2026-10-27, HEAD `8196e9b`): S1-S4 DAT K1-K4; tu dien fragment dung duoc
+Logs: `logs/m16_step0_rerun.log`, `m16_scaler.log`, `m16_check.log`, `m16_fragdict.log`.
+
+### 38.1. K1-K4 DAT ⇒ S1-S4 khong lam doi nhan 7D
+Scaler moi khop ban cu trong 1e-4; vocab trong `[3.500 ; 5.336]`; `frame_stable` giu 17.200/764/255;
+`local_coords`/`atomic_nums` day du, `frag_order_mode = frag2seq_canonical_appearance`.
+⇒ Bon thay doi (dummyLabels, luu toa do cuc bo, thu tu Frag2Seq, vocab sorted+train-only) **chi doi tu vung,
+thu tu va nhan dummy**, dung nhu dac ta 37.7.
+
+### 38.2. Tu dien fragment (lan 1): xap xi mot-conformer DAT, do phu THIEU
+```
+token fragment doc duoc        101.791        SMILES duy nhat trong tu dien   3.178
+rmsd_spread: median 0,0620 A   p90 0,2818     p99 1,5265
+do phu VALID: token 4.608/4.869 = 0,9464  |  phan tu du MOI fragment: 542/764 = 0,7094
+```
+* **`median(rmsd_spread) = 0,062 A` ⇒ DAT** (nguong 0,5). Xap xi "mot conformer moi SMILES" (chinh la xap xi cua
+  Frag2Seq) **khong** phai nguon loi dang ke cho phan lon fragment.
+* **Duoi cung co duoi nang:** `p99 = 1,53 A`; lech nhat la `*O*` 6,25 A, `*CC` 5,80 A, `*c1nnc(*)n1*` 4,13 A.
+  Day deu la fragment **rat nho va doi xung**. Mot fragment 3 nguyen tu voi lien ket ~1,4 A **khong the** lech
+  6 A ve hinh hoc that ⇒ nhieu kha nang la **hoan vi thu tu nguyen tu**: `CanonicalRankAtoms(breakTies=True)`
+  chay tren mol chi `UpdatePropertyCache(strict=False)` + `FastFindRings` (khong sanitize day du), nen voi
+  fragment doi xung thu tu co the khac nhau giua cac lan. Kabsch **khong** sua duoc hoan vi.
+  **Anh huong thuc te: nho.** Luc SINH khong co "thu tu dung" de doi chieu — ta dat nguyen van template, va lien
+  ket duoc suy lai tu hinh hoc (37.3). Phep kiem tai dung A2 dung `local_coords` **theo tung lan xuat hien** trong
+  pkl nen khong qua tu dien ⇒ khong bi anh huong. Da them chan doan (n_atom cua cac lan lech nhat) de xac nhan.
+* **Do phu la van de that:** chi **70,94%** phan tu valid co du moi fragment.
+
+### 38.3. Nguyen nhan do phu thieu — da sua
+`build_fragment_dict.py` loc `frame_stable` (do on dinh cua **frame HOC**), trong khi `build_global_vocab`
+**khong** loc. Template fragment nam trong **frame FRAGMENT**, doc lap hoan toan voi frame hoc ⇒ bo loc do lam
+mat do phu **vo co**. Da sua: bo loc `frame_stable`, chi bo item co `frag_frame_stable=False` (voi chung
+`_get_local_frame` roi ve `eye(3)` nen `local_coords` nam trong huong **the gioi**, khong dung lam template duoc).
+Them **do phu TU VUNG** — so do quan trong hon do phu valid: luc sinh, mo hinh chi phat ra token trong tu vung;
+token khong co template thi **khong dat pose duoc**. Tu vung >= 3.500 (K2) nhung tu dien chi 3.178 ⇒ truoc khi
+sua co **>= 322 token khong co template**.
+
+### 38.4. He qua quan trong: KHONG CO baseline tu checkpoint cu
+`periodic-epoch=024.ckpt` co `token_embedding` 19.033 x 256 va `semantic_head` xuat 19.033 logit. Tu vung moi
+~3.500 ⇒ **lech shape, khong load duoc cho sinh mau**. Khong the lay baseline cua mo hinh cu duoi tu vung moi.
+Ma so cu cung **vo nghia san** (37.2). ⇒ **Bo y dinh "baseline tu checkpoint cu"** (Rev 20 A3).
+**Thay bang ba moc so sanh, deu co can cu:**
+1. **Ligand tham chieu** cua chinh cac hoc do (Apo2Mol cung bao moc nay — PDF Fig. 8, 9).
+2. **Nhan that qua duong tai dung** = tran tren cua bieu dien 7D + tu dien fragment (khong phu thuoc mo hinh).
+3. **Bang baseline cua Apo2Mol** (Pocket2Mol, IPDiff, Apo2Mol...) — **cung dataset, cung split PLINDER
+   23.052/1.071/478** (PDF muc 5) ⇒ so sanh truc tiep duoc, khong can chay lai baseline nao.
+
+### 38.5. Thu tu da cap nhat
+`A0 DAT` → **A1' (dung lai tu dien, ~1 phut)** → **A2 (viet lai Step 7 + kiem tai dung tu NHAN THAT)** →
+**C (huan luyen lai step6, ~19 gio)** → **A3 (danh gia, so voi 3 moc o 38.4)**.
+A2 chay duoc **ngay**, khong can mo hinh: no chi dung nhan that + tu dien.
+**B (cluster bootstrap): HOAN.** Cache probe gan voi tu vung cu (37.7) nen phai dung lai cache truoc; gia tri
+thong tin thap hon duong A2→C→A3. Quay lai sau khi co so chat luong phan tu.
