@@ -3129,3 +3129,17 @@ Ma so cu cung **vo nghia san** (37.2). ⇒ **Bo y dinh "baseline tu checkpoint c
 A2 chay duoc **ngay**, khong can mo hinh: no chi dung nhan that + tu dien.
 **B (cluster bootstrap): HOAN.** Cache probe gan voi tu vung cu (37.7) nen phai dung lai cache truoc; gia tri
 thong tin thap hon duong A2→C→A3. Quay lai sau khi co so chat luong phan tu.
+
+### 38.6. LOI NGHIEM TRONG phat hien khi viet A2: chay lai step0 da XOA `pocket_R`/`pocket_t`
+`step0_data_prep.py` **khong bao gio** ghi `pocket_R`/`pocket_t`; chung do script migration
+`src/add_pocket_frame_to_pkl.py` (P2a-3, plan Rev 4) them vao **sau**. Chay lai step0 (A0) ghi de toan bo
+`*_sequence_7d.pkl` ⇒ **hai truong nay da mat**.
+**Hau qua:** `step6_trainer.py:177-180` doc `pkl_data["pocket_R"]` ⇒ huan luyen lai se **loi KeyError ngay**;
+phep kiem tai dung A2 cung can chung. K1-K4 **khong bat duoc** vi khong kiem truong nay (thieu sot dac ta 37.7).
+**Sua (hai phan):**
+1. **Truoc mat:** chay `python -u src/add_pocket_frame_to_pkl.py` (~15-25 phut) — re hon chay lai step0 2,5 gio.
+2. **Lau dai:** `step0` **tu ghi** `pocket_R`/`pocket_t` (da sua): `R_m_to_w`/`t_m_to_w` co san ngay tai cho tra
+   ve va la **cung mot frame** dung de sinh nhan ⇒ bo han buoc migration, het ca rui ro lech frame
+   (dung tinh than R14: khong tinh lai mot dai luong da co bang duong khac).
+**Bai hoc cho 37.7 (them vao R15):** kiem khong-doi phai liet ke **moi truong ma downstream doc**, khong chi cac
+truong moi them. Lan nay thieu `pocket_R`/`pocket_t` nen K1-K4 bao DAT trong khi pkl da hong voi step6.
