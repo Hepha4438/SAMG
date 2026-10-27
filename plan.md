@@ -1681,3 +1681,37 @@ Chan doan: `max|d sorted| ~ 0` nhung `kabsch` lon ⇒ hoan vi thu tu nguyen tu (
 `max|d sorted|` LON ⇒ hinh hoc that su khac ⇒ truy tiep truoc khi di.
 
 Ket qua ghi vao **Muc 39**.
+
+---
+
+# PLAN Rev 20 — bo sung sau A2a (2026-10-27)
+
+**A2a DAT tuyet doi: RMSD = 0,0000 o 20/20** (Muc 39.2). Bieu dien 7D khong mat thong tin nao.
+Chan doan: `rmsd_spread` la bien thien conformer THAT, khong phai hoan vi thu tu (39.3) ⇒ tu dien phai lay
+**medoid**, khong lay conformer dau tien (39.4, da code).
+**P3a-1 va P3a-3 da duoc ap dung tu truoc** (39.5) ⇒ huan luyen lai khong con gi chan.
+
+## Thu tu moi (hai nhanh SONG SONG)
+| nhanh | viec | chi phi |
+|---|---|---|
+| **GPU** | A1c (dung lai tu dien, medoid) → **C: `step6` huan luyen lai** | ~1 phut + ~19 gio |
+| **CPU (tro ly viet code)** | A2b: `step7_generate_eval.py` — sinh mau + dat pose + danh gia chuan | — |
+
+### A1c. Dung lai tu dien voi medoid (~1 phut)
+```bash
+python -u src/build_fragment_dict.py 2>&1 | tee logs/m19_fragdict_medoid.log
+```
+**Doc (ghi cung):** `do phu TU VUNG` phai van **= 1,0000**. `ngoai lai hinh hoc (span > 1,8 x n_atom)` phai
+**= 0**; neu > 0 thi medoid van dinh conformer hong ⇒ bao cao, va fragment do phai bi loc truoc khi sinh mau.
+(1,8 A moi lien ket la can tren rat rong rai cho lien ket cong hoa tri — quy uoc du an, R16 muc 3.)
+
+### C. Huan luyen lai `step6` (~19 gio)
+**Chi ap cac sua da co; KHONG them C4, KHONG 6D rotation** (39.5: ca hai la thi nghiem, se khong tach duoc
+nguyen nhan). Tu vung moi (~3.983), nhan 7D khong doi, `pocket_R`/`pocket_t` da khoi phuc.
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 python -u src/step6_trainer.py 2>&1 | tee logs/m19_train.log
+```
+**Kiem o dong dau log (R2):** `SEED`, `git rev-parse HEAD`, `permutation` thuc te cua ARN, `vocab_size`.
+`vocab_size` phai ~3.983, **khong** phai 19.033 — neu van 19.033 thi loader doc vocab cu, **DUNG**.
+
+Ket qua ghi vao **Muc 40**.
