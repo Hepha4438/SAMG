@@ -3198,3 +3198,34 @@ P3a-1 (`permutation=torch.arange`) va P3a-3 (mask padding cho `_ls_sum`/`_pin_su
 **KHONG dua C4 (bo `v_context.detach()`) va 6D rotation vao lan nay:** ca hai la **thi nghiem** doi muc tieu
 huan luyen, khong phai sua loi; gop vao se khong tach duoc nguyen nhan neu ket qua doi. Giu HOAN, quyet o Rev 21
 sau khi co so chat luong phan tu dau tien.
+
+---
+
+## 40-pre. Hai loi chan huan luyen lai (server, 2026-10-28, HEAD `192e747`) — doc log, sua code
+Log: `logs/m19_train.log`. `trainer.fit` **no ngay** voi `RuntimeError: Error(s) in loading state_dict`.
+
+### 40-pre.1. `step6_trainer.py` TU DONG resume tu checkpoint cu, khong hoi
+`step6:533-539` lay **file .ckpt moi nhat** trong `saved_checkpoints_flow/` roi truyen vao
+`trainer.fit(..., ckpt_path=...)`. Sau khi tu vung doi (19.033 → 3.983, Muc 37.4) checkpoint cu **khong the**
+load: `token_embedding.weight` `[19033,256]` vs `[3983,256]`, `semantic_head.3` tuong tu.
+**Day la hanh vi nguy hiem doc lap voi loi hom nay:** mot script huan luyen **mac dinh** resume se am tham tiep
+tuc mot run cu moi khi thu muc checkpoint khong rong — tuc khong bao gio chay duoc tu dau neu khong xoa file.
+**Sua:** resume phai **xin tuong minh** (`--resume <path|auto>`), mac dinh huan luyen tu dau; them **guard**
+doi chieu `vocab_size` cua checkpoint voi vocab hien tai va bao loi **ro rang** thay vi de Lightning no.
+
+### 40-pre.2. `geo_head` mac dinh la `diag_gauss`, nhung toan bo cong cu do doc MAF
+`step6:438` mac dinh `"diag_gauss"`; log dong 12 xac nhan `geo_head: diag_gauss  permutation ARN: None`.
+Checkpoint cu la **MAF** (20.9), va **moi** so da do (A3, A4, A5, A6, Muc 24-35) deu tren MAF.
+**Ly do chon MAF cho lan nay (khong phai so thich):** cong cu do cua du an —
+`measure_pocket_shuffle.py` (hook tren `model.generator.geometric_head.arn`),
+`measure_logscale_realtokens.py`, `recover_arn_permutation.py` — **chi chay duoc voi MAF**;
+`DiagonalGaussianHead` khong co `arn`. Chay `diag_gauss` bay gio la **mat toan bo kha nang chan doan**.
+So sanh MAF vs diagonal (E1, hoan tu Rev 5) van la mot thi nghiem **mot bien** rieng, lam sau.
+**Sua:** them `--geo-head`, **mac dinh `maf`**.
+
+### 40-pre.3. Kem theo
+* In `vocab_size` o dau run (R2) — truoc day khong in, nen khong doi chieu duoc 3.983 vs 19.033.
+* `--max-epochs` thanh tham so (truoc hard-code 25).
+* **Checkpoint cu phai duoc luu tru, khong xoa** (R12): chung thuoc tu vung cu va moi so o Muc 24-35 gan voi
+  chung. Chuyen sang `saved_checkpoints_flow_OLD_vocab19033/` de `default_ckpt()` cua cac script do khong
+  vo tinh lay nham.
