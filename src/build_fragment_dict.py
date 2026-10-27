@@ -34,6 +34,7 @@ sys.path.insert(0, CURRENT_DIR)
 
 RMSD_MEDIAN_THRESHOLD = 0.5   # A
 COVERAGE_THRESHOLD = 0.95
+K_SAMPLE = 50                 # Muc 39.4: so lan xuat hien lay mau de chon MEDOID
 
 
 def kabsch_rmsd(P, Q):
@@ -103,12 +104,15 @@ def main():
             nums = np.asarray(item["atomic_nums"])
             if smi not in frag_dict:
                 frag_dict[smi] = {"atomic_nums": nums, "local": local, "n_seen": 1,
-                                   "n_atoms": int(local.shape[0])}
+                                   "n_atoms": int(local.shape[0]), "_samples": [local]}
             else:
                 e = frag_dict[smi]
                 e["n_seen"] += 1
                 if e["local"].shape == local.shape:
                     spreads.append((smi, kabsch_rmsd(local, e["local"])))
+                    # Muc 39.4: giu toi da K_SAMPLE lan xuat hien de chon medoid o cuoi.
+                    if len(e["_samples"]) < K_SAMPLE:
+                        e["_samples"].append(local)
         if (k + 1) % 2000 == 0:
             print(f"  doc {k + 1}/{len(train_ids)}  (|dict| = {len(frag_dict)})", flush=True)
 
@@ -118,6 +122,48 @@ def main():
 
     print(f"\n[*] token fragment doc duoc: {n_items}  (thieu truong: {n_missing_field}; "
           f"bo vi frag_frame_stable=False: {n_unstable_frag})")
+
+    # ---------------------------------------------------------------- Muc 39.4: chon MEDOID
+    # Lua chon "conformer DAU TIEN gap" la tuy tien: neu lan dau gap roi dung vao conformer hong
+    # (Muc 39.3 -- co truong hop span > 12 A tren fragment 3 nguyen tu) thi MOI phan tu sinh ra chua
+    # fragment do deu co hinh hoc vo ly. Medoid = conformer cuc tieu hoa tong RMSD toi cac conformer
+    # con lai: ben voi ngoai lai, va luon la mot conformer CO THAT nen hinh hoc hoa hoc hop le.
+    print(f"[*] chon conformer MEDOID (toi da K={K_SAMPLE} mau moi SMILES) ...", flush=True)
+    n_changed, medoid_spreads, spans = 0, [], []
+    for smi, e in frag_dict.items():
+        S = e.pop("_samples")
+        m = len(S)
+        if m > 1:
+            D = np.zeros((m, m))
+            for i in range(m):
+                for j in range(i + 1, m):
+                    D[i, j] = D[j, i] = kabsch_rmsd(S[i], S[j])
+            D = np.nan_to_num(D, nan=0.0)
+            best = int(np.argmin(D.sum(axis=1)))
+            e["medoid_spread"] = float(D[best].mean())
+            if best != 0:
+                d0 = kabsch_rmsd(S[0], S[best])
+                if d0 == d0 and d0 > 0.5:
+                    n_changed += 1
+                e["local"] = S[best]
+            medoid_spreads.append(e["medoid_spread"])
+        else:
+            e["medoid_spread"] = 0.0
+        e["n_sample"] = m
+        loc = e["local"]
+        e["span"] = float(np.linalg.norm(loc - loc.mean(0), axis=-1).max() * 2)
+        spans.append((smi, e["span"], e["n_atoms"]))
+    print(f"    so fragment ma medoid KHAC conformer dau > 0,5 A: {n_changed}/{len(frag_dict)} "
+          f"({n_changed / max(len(frag_dict), 1) * 100:.2f}%)")
+    if medoid_spreads:
+        ms = np.array(medoid_spreads)
+        print(f"    medoid_spread (A): median={np.median(ms):.4f}  p90={np.percentile(ms, 90):.4f}  "
+              f"p99={np.percentile(ms, 99):.4f}")
+    # ngoai lai hinh hoc: span lon bat thuong so voi so nguyen tu (~1,5 A moi lien ket, rat rong rai)
+    out = [(sm, sp, na) for sm, sp, na in spans if sp > 1.8 * na]
+    print(f"    ngoai lai hinh hoc trong TEMPLATE da chon (span > 1,8 x n_atom): {len(out)}")
+    for sm, sp, na in sorted(out, key=lambda x: -x[1])[:5]:
+        print(f"        {sm[:40]:42} span={sp:6.2f} A  n_atom={na}")
     print(f"[*] so SMILES duy nhat trong tu dien: {len(frag_dict)}")
 
     if spreads:
