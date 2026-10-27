@@ -65,6 +65,8 @@ Hai dấu vân tay độc lập cho cơ chế dấu của `qy`: nhóm `|qy|` tr�
 −1,0 so với 3,4%, Mục 23.2), và `E[z²](qy) = 0,675` trong khi 6 chiều kia 0,94–1,01 (Mục 24.5).
 
 ### A5. Hốc protein CÓ được dùng (xáo trộn lúc suy luận, pipeline)
+> ⚠️ **[BỊ KÉO THẤP — Mục 36]** Loader không xáo ghép complex **cùng protein** vào cùng batch (~50% cặp tráo cùng
+> cluster MMseqs2 30%) ⇒ giải thích ~78% mức đo thấp.
 > ⚠️ **[XEM LẠI — Mục 34.3]** Bảng dưới đo bằng loader **không xáo** + tráo trong batch 16 ⇒ chỉ là **cận dưới**,
 > phụ thuộc giao thức. Với loader xáo (M12, K=20): `d` **0,216 ± 0,018**, `theta` 0,131, `phi` 0,075, `qw` 0,050,
 > `qz` **0,063** ⇒ câu "chỉ cho tịnh tiến / phép quay không có gì" **không còn đứng**. Rev 18 (a) kiểm nguyên nhân.
@@ -127,6 +129,10 @@ Tanh: `|out| > 0,99` = 0,00%, `max|pre-act|` = 1,91.
 ### A6d. Rev 18 (Mục 35)
 (b) lợi ích MSE `G(d)`: pipeline 0,031 ± 0,013 vs P1 0,073 ± 0,013 ⇒ **không kết luận** (P2 trượt (b0)).
 t1: pipeline 0,024 < P1 0,080 (quan sát). `G_pipe(qz)` = 0,030 ± 0,003 > 0.
+
+### A1b. Cấu trúc cụm của valid (Mục 36.1)
+764 complex · 446 PDB · **131 cluster MMseqs2 30%** ⇒ cỡ mẫu độc lập hiệu dụng cho suy rộng sang hốc mới gần 131.
+Mọi ±2sd ở Mục 33–35 chưa tính bất định theo cụm.
 
 ### A7b. Kết luận cấu trúc C4 (đọc code tĩnh, HEAD `eb32820`, Mục 34-pre.2; xác nhận khi chạy 34.1)
 Mọi đường `h_target → geometric_head` đi qua `v_context.detach()` (`step4:99`). Gradient `Geo_Loss` dừng
