@@ -3143,3 +3143,58 @@ phep kiem tai dung A2 cung can chung. K1-K4 **khong bat duoc** vi khong kiem tru
    (dung tinh than R14: khong tinh lai mot dai luong da co bang duong khac).
 **Bai hoc cho 37.7 (them vao R15):** kiem khong-doi phai liet ke **moi truong ma downstream doc**, khong chi cac
 truong moi them. Lan nay thieu `pocket_R`/`pocket_t` nen K1-K4 bao DAT trong khi pkl da hong voi step6.
+
+---
+
+## 39. Rev 20 A1b + A2a (server, 2026-10-27, HEAD `7a77ef6`): phep nghich dao DUNG TUYET DOI
+Logs: `logs/m18_pocket_frame.log`, `logs/m18_recon.log`.
+
+### 39.1. Khoi phuc pocket frame: 23.660/23.660 file, khong mismatch
+`add_pocket_frame_to_pkl.py` chay 3 phut 32 giay, them `pocket_R`/`pocket_t` cho **toan bo** pkl, **khong** canh
+bao `n_mismatch` ⇒ `_get_pocket_frame` tai lap duoc giua hai lan chay (xac nhan them cho P1b: Gram-Schmidt tat
+dinh, khong co nhanh re). Tu lan chay step0 sau, buoc nay **khong con can** (step0 tu ghi, Muc 38.6).
+
+### 39.2. Kiem tai dung tu nhan that: **RMSD = 0,0000 o 20/20** — DAT
+```
+20 complex valid, 15-32 nguyen tu moi phan tu
+RMSD median = 0,0000   max = 0,0000   max dev = 0,0000   sai nguyen to = 0
+```
+Gan ghep Hungarian co rang buoc cung nguyen to; so nguyen tu tai dung **khop chinh xac** SDF goc o ca 20.
+⇒ **Phep nghich dao 37-pre.3 dung tuyet doi**, khong phai "trong sai so". Chuoi
+`(pocket_R, pocket_t, [d, θ, φ, quaternion], local_coords)` **tai dung day du** phan tu 3D — dung nhu dinh ly
+surjective cua Frag2Seq. **Bo 7 so KHONG mat thong tin nao.**
+He qua: moi sai lech o buoc danh gia ve sau **chi** den tu (a) du doan cua mo hinh, hoac (b) xap xi template
+mot-conformer cua tu dien — **khong** tu bieu dien. Day la lan dau du an co mot mat xich **khong** phai nghi ngo.
+
+### 39.3. Chan doan `*O*`: la BIEN THIEN HINH HOC THAT, khong phai hoan vi thu tu — va lo ra mot diem yeu
+Tren 300 lan xuat hien dau: `kabsch` toi da **0,339 A**, nhung `max|d sorted|` = **0,668 != 0**.
+Vector khoang cach doi mot **bat bien voi thu tu nguyen tu**, nen khac nhau ⇒ **hinh hoc that su khac**.
+```
+moc   (1a4h): sorted-distance [1,310 ; 1,454 ; 2,371]   (d1-d2 = 2,371 ⇒ goc C-O-C ≈ 112°)
+lech  (1aj2): sorted-distance [1,527 ; 1,565 ; 3,039]   (d1-d2 = 3,039 ⇒ goc C-O-C ≈ 159°)
+```
+⇒ **Gia thuyet "hoan vi thu tu nguyen tu" o 38.2 BI BAC.** `rmsd_spread` do bien thien conformer that.
+Goc ete C-O-C **159°** khong phai hinh hoc hoa hoc binh thuong (~110-120°) ⇒ chat luong cau truc nguon
+(PLINDER loc `resolution <= 2,5 A`, van con cau truc tinh che kem).
+**Truong hop 6,25 A chua cham toi:** chan doan dung o 300 lan xuat hien dau (cac PDB dau bang chu cai).
+Voi fragment 3 nguyen tu, `kabsch = 6,25 A` doi hoi `span > 12 A` ⇒ **conformer hong** trong SDF nguon.
+**Diem yeu lo ra:** tu dien lay conformer **DAU TIEN gap** lam template — mot lua chon **tuy tien**. Neu lan dau
+gap roi dung vao conformer hong thi **moi** phan tu sinh ra chua fragment do deu co hinh hoc vo ly.
+**Ban sua (Muc 39.4).**
+
+### 39.4. Tu dien: lay conformer MEDOID thay vi conformer dau tien
+Thay "first seen" bang **medoid**: trong toi da `K = 50` lan xuat hien duoc lay mau cho moi SMILES, chon conformer
+**cuc tieu hoa tong RMSD (Kabsch) toi cac conformer con lai**. Medoid la uoc luong trung tam **ben voi ngoai lai**
+(khac trung binh, no luon la mot conformer co that nen hinh hoc hoa hoc hop le). Conformer hong nam o ria ⇒
+khong bao gio duoc chon tru khi phan lon lan xuat hien deu hong.
+Bao cao them: `medoid_spread` (RMSD trung binh tu medoid), so fragment ma **first khac medoid > 0,5 A** (= so
+fragment ma lua chon tuy tien truoc day da sai lech dang ke), va **ngoai lai hinh hoc** (`span` lon bat thuong
+so voi so nguyen tu).
+
+### 39.5. Trang thai: huan luyen lai KHONG con gi chan
+P3a-1 (`permutation=torch.arange`) va P3a-3 (mask padding cho `_ls_sum`/`_pin_sum`) **da duoc ap dung** tu truoc
+(`step2_mdn_module.py:53-56`, `:74-86`, `:140-142`, `:151-152`) ⇒ hai muc HOAN tu Rev 5/Rev 10 **da xong**.
+`pocket_R`/`pocket_t` da khoi phuc; tu vung moi; scaler khop. ⇒ **Co the chay step6 ngay.**
+**KHONG dua C4 (bo `v_context.detach()`) va 6D rotation vao lan nay:** ca hai la **thi nghiem** doi muc tieu
+huan luyen, khong phai sua loi; gop vao se khong tach duoc nguyen nhan neu ket qua doi. Giu HOAN, quyet o Rev 21
+sau khi co so chat luong phan tu dau tien.
