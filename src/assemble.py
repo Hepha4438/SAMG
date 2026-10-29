@@ -1,0 +1,153 @@
+"""
+assemble.py -- lap rap phan tu 3D tu cac fragment da dat pose. CUA RIENG DU AN.
+
+Vi sao khong muon `reconstruct_from_generated` cua Apo2Mol (ban dau du dinh, Muc 37.3):
+  1. Server khong co repo Apo2Mol (chi co o may local), va no keo theo `openbabel`.
+  2. Ham do (goc tu liGAN, GPL-2.0) **vut bo toan bo thong tin lien ket** roi de OpenBabel suy lai
+     bac lien ket + thom tinh tu toa do. Day la mat mat KHONG CAN THIET o day: ta **da biet** lien
+     ket trong tung fragment -- chinh SMILES cua no mang thong tin do. Chi con phai quyet dinh
+     fragment noi voi fragment o dau.
+  3. Lay bac lien ket tu SMILES chinh xac hon suy lai tu hinh hoc, nhat la voi vong thom va nhom tich dien.
+
+Co so: Frag2Seq muc 3.3.1 + dinh ly surjective -- tu {fragment + pose} tai dung duy nhat phan tu 3D.
+`step0:206` chi cat lien ket **don, khong trong vong, bac hai dau > 1**, nen moi lien ket LIEN-FRAGMENT
+can noi lai deu la lien ket DON. `Chem.FragmentOnBonds` dat nguyen tu dummy **tai dung vi tri** cua
+nguyen tu o dau kia lien ket bi cat ⇒ ghep cap dummy <-> nguyen tu that bang KHOANG CACH la dung
+nguyen ban, khong phai suy doan.
+
+Tuong ung nguyen tu: `local_coords` luu theo thu tu CANONICAL RANK cua step0, con `Chem.MolFromSmiles`
+tra ve thu tu khac. Khop hai ben bang substructure match voi **bac lien ket tong quat** (do thi dau do
+dung tu khoang cach cong hoa tri). Fragment doi xung co nhieu khop, nhung cac khop do la anh cua nhau
+qua phep tu dang cau ⇒ cho cung mot phan tu, nen lay khop nao cung duoc.
+"""
+import numpy as np
+from rdkit import Chem
+from rdkit.Chem import rdchem
+from rdkit.Geometry import Point3D
+
+# Ban kinh cong hoa tri (A) -- Cordero et al. (2008), Dalton Trans., "Covalent radii revisited".
+COVALENT_R = {1: 0.31, 5: 0.84, 6: 0.76, 7: 0.71, 8: 0.66, 9: 0.57, 14: 1.11, 15: 1.07,
+              16: 1.05, 17: 1.02, 34: 1.20, 35: 1.20, 53: 1.39}
+BOND_TOL = 1.3          # he so noi long cho tong ban kinh (quy uoc thuong dung trong perception)
+LINK_TOL = 1.5          # A -- nguong ghep dummy <-> nguyen tu that giua hai fragment (quy uoc du an)
+
+
+class AssemblyError(Exception):
+    pass
+
+
+def _distance_graph(coords, atomic_nums):
+    """RWMol chi co lien ket DON suy tu khoang cach -- chi dung lam do thi do de khop tuong ung."""
+    m = Chem.RWMol()
+    for z in atomic_nums:
+        m.AddAtom(Chem.Atom(int(z)))
+    n = len(atomic_nums)
+    for i in range(n):
+        for j in range(i + 1, n):
+            ri = COVALENT_R.get(int(atomic_nums[i]), 0.77)
+            rj = COVALENT_R.get(int(atomic_nums[j]), 0.77)
+            if np.linalg.norm(coords[i] - coords[j]) < BOND_TOL * (ri + rj):
+                m.AddBond(i, j, Chem.BondType.SINGLE)
+    return m
+
+
+def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
+    """Tra ve (mol da co conformer trong frame FRAGMENT, thu tu nguyen tu theo SMILES).
+    Bac lien ket va thom tinh lay tu SMILES; toa do lay tu local_coords qua phep khop tuong ung."""
+    ref = Chem.MolFromSmiles(smiles, sanitize=True)
+    if ref is None:
+        raise AssemblyError(f"khong parse duoc SMILES fragment: {smiles!r}")
+    coords = np.asarray(local_coords, dtype=np.float64)
+    z = np.asarray(atomic_nums).reshape(-1)
+    if ref.GetNumAtoms() != len(z):
+        raise AssemblyError(f"{smiles!r}: SMILES co {ref.GetNumAtoms()} nguyen tu, template co {len(z)}")
+
+    probe = _distance_graph(coords, z).GetMol()
+    params = Chem.AdjustQueryParameters.NoAdjustments()
+    params.makeBondsGeneric = True       # do thi do chi co lien ket don -> bo qua bac khi khop
+    params.makeDummiesQueries = False
+    query = Chem.AdjustQueryProperties(ref, params)
+    match = probe.GetSubstructMatch(query)   # match[i] = chi so trong probe cua nguyen tu ref i
+    if not match:
+        raise AssemblyError(f"{smiles!r}: khong khop duoc thu tu nguyen tu giua SMILES va template")
+
+    out = Chem.RWMol(ref)
+    conf = Chem.Conformer(out.GetNumAtoms())
+    for i, pi in enumerate(match):
+        x, y, zc = coords[pi]
+        conf.SetAtomPosition(i, Point3D(float(x), float(y), float(zc)))
+    out.RemoveAllConformers()
+    out.AddConformer(conf, assignId=True)
+    return out.GetMol()
+
+
+def place(mol_local, R_g_to_w, center_world):
+    """Dua fragment tu frame fragment sang frame the gioi: xoay quanh tam roi tinh tien."""
+    conf = mol_local.GetConformer()
+    P = conf.GetPositions()
+    P = (np.asarray(R_g_to_w) @ (P - P.mean(axis=0)).T).T + np.asarray(center_world)
+    out = Chem.Mol(mol_local)
+    c = out.GetConformer()
+    for i in range(out.GetNumAtoms()):
+        c.SetAtomPosition(i, Point3D(*[float(v) for v in P[i]]))
+    return out
+
+
+def assemble(frag_mols, link_tol=LINK_TOL):
+    """Noi cac fragment DA DAT POSE tai cac nguyen tu dummy. Tra ve (mol, diag).
+
+    Nguyen tu dummy cua fragment A nam DUNG vi tri cua nguyen tu that ma A von noi toi o fragment B.
+    Nen: voi moi dummy, tim nguyen tu that gan nhat thuoc fragment KHAC; neu trong `link_tol` thi noi
+    hang xom cua dummy do voi nguyen tu ay bang lien ket DON (step0 chi cat lien ket don).
+    Dummy khong ghep duoc thi bo di -- hoa tri trong duoc H an bu vao.
+    """
+    if not frag_mols:
+        raise AssemblyError("khong co fragment nao")
+    combo = frag_mols[0]
+    owner = [0] * frag_mols[0].GetNumAtoms()
+    for k, m in enumerate(frag_mols[1:], start=1):
+        combo = Chem.CombineMols(combo, m)
+        owner += [k] * m.GetNumAtoms()
+
+    rw = Chem.RWMol(combo)
+    P = combo.GetConformer().GetPositions()
+    owner = np.array(owner)
+    is_dummy = np.array([a.GetAtomicNum() == 0 for a in rw.GetAtoms()])
+    real_idx = np.where(~is_dummy)[0]
+
+    bonds, n_linked, n_orphan = set(), 0, 0
+    for d in np.where(is_dummy)[0]:
+        nbrs = [a.GetIdx() for a in rw.GetAtomWithIdx(int(d)).GetNeighbors()]
+        if len(nbrs) != 1:
+            n_orphan += 1
+            continue
+        cand = real_idx[owner[real_idx] != owner[d]]
+        if cand.size == 0:
+            n_orphan += 1
+            continue
+        dist = np.linalg.norm(P[cand] - P[d], axis=1)
+        j = int(cand[int(np.argmin(dist))])
+        if dist.min() > link_tol:
+            n_orphan += 1
+            continue
+        a, b = sorted((int(nbrs[0]), j))
+        if (a, b) not in bonds:
+            bonds.add((a, b))
+            n_linked += 1
+
+    for a, b in bonds:
+        if rw.GetBondBetweenAtoms(a, b) is None:
+            rw.AddBond(a, b, Chem.BondType.SINGLE)
+    for d in sorted(np.where(is_dummy)[0], reverse=True):
+        rw.RemoveAtom(int(d))
+
+    mol = rw.GetMol()
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception as exc:
+        raise AssemblyError(f"sanitize that bai: {exc}") from exc
+    if mol.GetNumAtoms() == 0:
+        raise AssemblyError("phan tu rong sau khi bo dummy")
+    diag = {"n_frag": len(frag_mols), "n_bond_lien_frag": n_linked, "n_dummy_mo_coi": n_orphan,
+            "n_manh": len(Chem.GetMolFrags(mol))}
+    return mol, diag
