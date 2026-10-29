@@ -191,6 +191,15 @@ class SAMGDataPreprocessor:
         phi = np.arctan2(vector[1], vector[0])
         return float(d), float(theta), float(phi)
 
+    @staticmethod
+    def bonds_to_break(mol):
+        """Tieu chi cat lien ket -- Frag2Seq muc 3.2: (1) khong trong vong, (2) lien ket DON,
+        (3) bac cua ca hai dau > 1 (tranh cat roi nhom chuc). Tach ra lam MOT CHO DINH NGHIA DUY NHAT
+        de cac script chan doan dung lai thay vi chep (R14)."""
+        return [b.GetIdx() for b in mol.GetBonds()
+                if b.GetBondType() == Chem.BondType.SINGLE and not b.IsInRing()
+                and b.GetBeginAtom().GetDegree() > 1 and b.GetEndAtom().GetDegree() > 1]
+
     def fragment_ligand_frag2seq(self, ligand_path, apo_pocket_path):
         """
         Tra ve dict {"frame_stable": bool, "frame_diag": dict, "sequence": [...]}.
@@ -203,7 +212,7 @@ class SAMGDataPreprocessor:
         mol = supplier[0]
         if mol is None: return None
             
-        bonds_to_break = [bond.GetIdx() for bond in mol.GetBonds() if bond.GetBondType() == Chem.BondType.SINGLE and not bond.IsInRing() and bond.GetBeginAtom().GetDegree() > 1 and bond.GetEndAtom().GetDegree() > 1]
+        bonds_to_break = self.bonds_to_break(mol)
         if not bonds_to_break: return None
             
         # Muc 37.1/37.4: KHONG truyen dummyLabels thi RDKit gan isotope cua nguyen tu dummy =
