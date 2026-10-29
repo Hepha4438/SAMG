@@ -3264,3 +3264,10 @@ gio chua `[SOS]` nen `pad_mask = (target_ids != 0)` van dung, nhung day la su tr
 **Tam thoi (cho lan nay):** lay do dai tu **phan phoi thuc nghiem so fragment/phan tu cua train**
 (quy uoc du an, R16 muc 3). **Ban sua that:** them `[EOS]` vao tu vung va vao `target_ids`, can chay lai step0
 + huan luyen lai ⇒ ghi vao Rev 21, khong gop vao lan nay.
+
+### 40.3. Duong dan server: `~/SAMG` KHONG ton tai (xac minh 2026-10-29)
+Cau hoi treo tu Muc 37 (`readlink -f ~/SAMG`) **da co dap an**: `cd ~/SAMG` bao `no such file or directory`.
+Duong dan that la `/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG`; khong co symlink nao.
+`WORKING_RULES` muc E va moi khoi lenh tro ly dua ra tu Muc 34 den nay deu ghi `cd ~/SAMG` — **sai**.
+Cac lan chay truoc van dung vi nguoi dung da o san thu muc do. Da sua mau lenh chuan sang
+`export SAMG=/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG` roi `cd $SAMG`.
