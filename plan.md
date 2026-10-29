@@ -1812,3 +1812,65 @@ QED/SA/logP/Lipinski **mu voi chat luong pose** — chung chi do "chon dung frag
 kiem hinh hoc moi doc duoc pose. Phai viet ro dieu nay trong moi bang ket qua.
 
 Ket qua ghi vao **Muc 42**.
+
+---
+
+# PLAN Rev 21 (2026-10-30) — HUONG (b): them KENH LIEN KET vao bieu dien
+
+Can cu: RESEARCH_CONTEXT **43.7** (bieu dien khong co kenh lien ket ⇒ pose sai lam **mat danh tinh phan
+tu**, khong chi lech pose) va **44** (Q1 cay DAT; Q2 thu tu Frag2Seq **BAC**; Q3 kich co head).
+Nguoi dung chon huong (b) ngay 2026-10-30.
+
+**Muc tieu:** do thi phan tu duoc **xac dinh boi token**, khong phu thuoc do chinh xac pose. Khi do
+tinh hop le (validity) tach khoi chat luong pose; QED/SA/Novelty tro nen doc duoc, va Vina do **rieng** pose.
+**Khong ky vong Vina tot o lan nay** (Muc 43: pose sai ~6 A, quay ngau nhien). Do la ket qua **dung du kien**.
+
+## S5. `step0`: thu tu DFS canonical + luu kenh lien ket
+* **S5a — thu tu**: thay sap theo "nguyen tu xep hang dau tien" (S3) bang **DFS canonical tren cay
+  fragment**: goc = fragment chua nguyen tu rank 0; duyet con theo rank nho nhat. Giu nguyen tieu chi cat
+  (`bonds_to_break`, Frag2Seq 3.2). Nguon: Jin et al. 2018 (JT-VAE), Muc 44.3.
+* **S5b — luu, moi item `sequence`**: `parent` (vi tri cha trong chuoi, `-1` cho goc),
+  `attach_self` (chi so dummy cua chinh no, trong thu tu **canonical** cua fragment — cung thu tu voi
+  `local_coords`), `attach_parent` (chi so dummy cua cha).
+* Giu nguyen moi thu khac (nhan 7D, `local_coords`, `atomic_nums`, `pocket_R/t`, tu vung).
+
+**Kiem khong-doi ghi cung TRUOC khi chay (R15):**
+* **K5** `parent[t] < t` o **100%** vi tri `t >= 1`, va `parent[0] == -1` o 100% phan tu. Khong dat ⇒ DFS sai.
+* **K6** scaler moi khop ban cu trong **1e-4** (nhan 7D **khong** doi — chi doi thu tu; sai so do doi thu tu
+  cong). Khong dat ⇒ S5 da lam doi nhan, **DUNG**.
+* **K7** `len(vocab)` **khong doi** (3.983): tap fragment hoa hoc khong phu thuoc thu tu.
+  Doi ⇒ co loi, **DUNG**.
+* **K8** Tai dung tu `parent`/`attach_*` (khong dung hinh hoc) phai cho **do thi trung khop** phan tu goc o
+  **>= 99%** complex. Day la phep kiem **truc tiep** rang kenh lien ket du de xac dinh phan tu.
+  (99% la quy uoc du an — R16 muc 3 — nhung K8 la tieu chi **quan trong nhat** cua Rev 21.)
+* **K9** `frame_stable` giu **17.200 / 764 / 255**.
+
+## S6. `step4`: ba head moi (Muc 44.5 — chon (ii), khong xen token)
+`parent_head`: con tro tich vo huong giua `h_ar[t]` va `h_ar[0..t-1]` (+ mot vector "goc" hoc duoc).
+`attach_self_head`, `attach_parent_head`: MLP nho -> **5 lop** (Q3: max 5 dummy/fragment).
+Dung `v_context` (**da detach**, giu nguyen C4 — khong gop thi nghiem khac vao lan nay).
+**Chuoi KHONG doi do dai, 7D van 1-1 voi vi tri ⇒ khong dong gi vao duong hinh hoc da xac nhan (Muc 42).**
+
+## S7. `step5`/`step6`: ba loss cross-entropy
+`loss_parent`, `loss_attach_self`, `loss_attach_parent`, moi cai trong so **1,0** (quy uoc du an: khong co
+can cu de dat khac; ghi ro va xem lai neu mot loss troi). Mask padding nhu `Geo_Loss`.
+In rieng tung loss trong log de theo doi.
+
+## S8. `step7_generate_eval.py`: dung do thi tu TOKEN
+Bo hoan toan buoc ghep cap dummy theo hinh hoc. Dung `parent`/`attach_*` du doan de **noi truc tiep**.
+**Che luc sinh** (bao dam hop le bang cau truc, khong bang hoc): cha phai `< t`; `attach_self` phai `<`
+so dummy cua fragment vua chon; `attach_parent` phai la dummy **con trong** cua cha.
+Pose chi dung de dat toa do 3D, **khong** quyet dinh lien ket.
+Bao cao them: **validity theo cau truc** (ky vong ~100% nho che) va **sai so pose** rieng.
+
+## Thu tu chay
+```
+S5 (code) -> chay lai step0 (~2,5 gio) -> K5-K9 -> build_fragment_dict (~1 phut)
+          -> S6/S7 (code) -> huan luyen lai (~19 gio) -> S8 (code) -> sinh mau + danh gia
+```
+Ket qua ghi vao **Muc 45**.
+
+## KHONG gop vao lan nay (de tach duoc nguyen nhan)
+`C4` (bo `v_context.detach()`), **6D rotation** (Zhou et al. 2019 — WORKING_RULES G5b), `[EOS]`,
+sinh bang ky vong thay vi lay mau. Ca bon deu co can cu, nhung gop vao thi khong doc duoc nguyen nhan.
+Quyet o Rev 22 sau khi co so cua Rev 21.
