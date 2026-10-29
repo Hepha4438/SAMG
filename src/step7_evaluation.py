@@ -339,7 +339,7 @@ def main():
             max_len = 15
 
             for step in range(max_len):
-                logits_vocab, loss_geo, sampled_7d, _ = model.generator(
+                logits_vocab, loss_geo, sampled_7d, _, _lk = model.generator(
                     input_ids, h_target, list_h_anti, target_mask=target_mask
                 )
 
