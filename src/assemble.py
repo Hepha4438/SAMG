@@ -64,9 +64,14 @@ def _distance_bonds(coords, atomic_nums):
     return out
 
 
-def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
-    """Tra ve (mol da co conformer trong frame FRAGMENT, thu tu nguyen tu theo SMILES).
-    Bac lien ket va thom tinh lay tu SMILES; toa do lay tu local_coords qua phep khop tuong ung."""
+def canon_to_smiles_map(smiles, local_coords, atomic_nums):
+    """{chi so CANONICAL -> chi so trong mol parse tu SMILES}. Dung de doc `attach_self`/`attach_parent`
+    (luu theo thu tu canonical cua step0) tren mol parse tu SMILES."""
+    _, match = _match(smiles, local_coords, atomic_nums)
+    return {int(c): i for i, c in enumerate(match)}
+
+
+def _match(smiles, local_coords, atomic_nums):
     ref = Chem.MolFromSmiles(smiles, sanitize=True)
     if ref is None:
         raise AssemblyError(f"khong parse duoc SMILES fragment: {smiles!r}")
@@ -74,14 +79,85 @@ def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
     z = np.asarray(atomic_nums).reshape(-1)
     if ref.GetNumAtoms() != len(z):
         raise AssemblyError(f"{smiles!r}: SMILES co {ref.GetNumAtoms()} nguyen tu, template co {len(z)}")
-
     probe = _plain_graph(z, _distance_bonds(coords, z))
     qgraph = _plain_graph([a.GetAtomicNum() for a in ref.GetAtoms()],
                           [(b.GetBeginAtomIdx(), b.GetEndAtomIdx()) for b in ref.GetBonds()])
-    match = probe.GetSubstructMatch(qgraph, useChirality=False)   # match[i] = chi so probe cua ref i
+    match = probe.GetSubstructMatch(qgraph, useChirality=False)
     if not match:
         raise AssemblyError(f"{smiles!r}: khong khop duoc thu tu nguyen tu giua SMILES va template")
+    return ref, match
 
+
+def assemble_by_channel(items, place_info=None):
+    """Rev 21 (S8): lap rap bang KENH LIEN KET, khong dung hinh hoc LIEN-fragment.
+
+    items: list theo thu tu DFS, moi phan tu la dict {smiles, local, z, parent, attach_self,
+    attach_parent}. `attach_*` la chi so CANONICAL cua nguyen tu dummy (nhu step0 luu).
+    place_info: list (R_g_to_w, center) de dat toa do 3D; None => giu frame fragment.
+
+    Khac `assemble()`: o day do thi phan tu **do token quyet dinh**, nen pose sai KHONG lam mat danh
+    tinh phan tu (Muc 43.7). Hinh hoc noi-fragment van dung de khop thu tu nguyen tu -- do la chinh
+    xac va khong lien quan den pose.
+    """
+    if not items:
+        raise AssemblyError("khong co fragment nao")
+    mols, c2s, offs, off = [], [], [], 0
+    for k, it in enumerate(items):
+        m = fragment_mol_with_coords(it["smiles"], it["local"], it["z"])
+        if place_info is not None:
+            m = place(m, place_info[k][0], place_info[k][1])
+        mols.append(m)
+        c2s.append(canon_to_smiles_map(it["smiles"], it["local"], it["z"]))
+        offs.append(off)
+        off += m.GetNumAtoms()
+
+    combo = mols[0]
+    for m in mols[1:]:
+        combo = Chem.CombineMols(combo, m)
+    rw = Chem.RWMol(combo)
+
+    def attach_atom(k, canon_idx):
+        """Nguyen tu THAT ma dummy `canon_idx` cua fragment k danh dau (hang xom duy nhat cua dummy)."""
+        if canon_idx is None or canon_idx < 0 or canon_idx not in c2s[k]:
+            return None, None
+        d_local = c2s[k][canon_idx]
+        d_glob = offs[k] + d_local
+        if rw.GetAtomWithIdx(d_glob).GetAtomicNum() != 0:
+            return None, None
+        nbrs = [a.GetIdx() for a in rw.GetAtomWithIdx(d_glob).GetNeighbors()]
+        return (nbrs[0], d_glob) if len(nbrs) == 1 else (None, None)
+
+    n_linked, n_fail = 0, 0
+    for k, it in enumerate(items):
+        par = it.get("parent", -1)
+        if par is None or par < 0 or par >= len(items):
+            continue
+        a_child, _ = attach_atom(k, it.get("attach_self"))
+        a_par, _ = attach_atom(par, it.get("attach_parent"))
+        if a_child is None or a_par is None:
+            n_fail += 1
+            continue
+        if rw.GetBondBetweenAtoms(a_child, a_par) is None:
+            rw.AddBond(a_child, a_par, Chem.BondType.SINGLE)
+            n_linked += 1
+
+    for d in sorted([a.GetIdx() for a in rw.GetAtoms() if a.GetAtomicNum() == 0], reverse=True):
+        rw.RemoveAtom(int(d))
+    mol = rw.GetMol()
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception as exc:
+        raise AssemblyError(f"sanitize that bai: {exc}") from exc
+    diag = {"n_frag": len(items), "n_bond_lien_frag": n_linked, "n_link_that_bai": n_fail,
+            "n_manh": len(Chem.GetMolFrags(mol))}
+    return mol, diag
+
+
+def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
+    """Tra ve (mol da co conformer trong frame FRAGMENT, thu tu nguyen tu theo SMILES).
+    Bac lien ket va thom tinh lay tu SMILES; toa do lay tu local_coords qua phep khop tuong ung."""
+    ref, match = _match(smiles, local_coords, atomic_nums)
+    coords = np.asarray(local_coords, dtype=np.float64)
     out = Chem.RWMol(ref)
     conf = Chem.Conformer(out.GetNumAtoms())
     for i, pi in enumerate(match):
