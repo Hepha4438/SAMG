@@ -125,20 +125,35 @@ def main():
     print(f"    => L3 {'DAT' if ok3 else 'KHONG DAT'}")
 
     print("\n" + "=" * 86 + "\nL4: loss ban dau vs ly thuyet (mo hinh CHUA hoc)\n" + "=" * 86)
+    # Vi tri t co (t+1) lua chon: cot 0 = GOC, cot 1..t = cac fragment truoc do.
+    # CE duoc lay trung binh tren MOI vi tri hop le, KE CA t=0 (chi 1 lua chon, ln(1)=0).
+    # Loai t=0 ra se thoi phong ky vong len -- do la loi cua ban truoc (xem Muc 47).
     exp_par = float(np.mean([math.log(t + 1) for b in range(B) for t in range(lens[b])
-                             if int(tp[b, t]) != -100 and t >= 1] or [0.0]))
-    print(f"    loss_parent        = {float(ld.get('loss_parent', float('nan'))):.4f}   "
-          f"ly thuyet ~ ln(so lua chon) trung binh = {exp_par:.4f}")
-    print(f"    loss_attach_self   = {float(ld.get('loss_attach_self', float('nan'))):.4f}   "
-          f"ly thuyet ~ ln({MAX_ATTACH}) = {math.log(MAX_ATTACH):.4f}")
-    print(f"    loss_attach_parent = {float(ld.get('loss_attach_parent', float('nan'))):.4f}")
+                             if int(tp[b, t]) != -100] or [0.0]))
+    exp_as = math.log(MAX_ATTACH)
+    l_par = float(ld.get("loss_parent", float("nan")))
+    l_as = float(ld.get("loss_attach_self", float("nan")))
+    l_ap = float(ld.get("loss_attach_parent", float("nan")))
+    # Nguong: mau nho (vai chuc vi tri) nen sai so chuan cua uoc luong CE ~0.1 nat;
+    # cho 0.25 nat tuyet doi. Lech hon the => mask hoac muc tieu sai, khong phai nhieu.
+    TOL = 0.25
+    print(f"    loss_parent        = {l_par:.4f}   ly thuyet (ke ca t=0) = {exp_par:.4f}"
+          f"   |lech| = {abs(l_par - exp_par):.4f}")
+    print(f"    loss_attach_self   = {l_as:.4f}   ly thuyet ln({MAX_ATTACH}) = {exp_as:.4f}"
+          f"   |lech| = {abs(l_as - exp_as):.4f}")
+    print(f"    loss_attach_parent = {l_ap:.4f}   ly thuyet ln({MAX_ATTACH}) = {exp_as:.4f}"
+          f"   |lech| = {abs(l_ap - exp_as):.4f}")
+    ok4 = (abs(l_par - exp_par) <= TOL and abs(l_as - exp_as) <= TOL
+           and abs(l_ap - exp_as) <= TOL)
+    print(f"    (nguong |lech| <= {TOL})  => L4 {'DAT' if ok4 else 'KHONG DAT'}")
     print(f"    loss_link          = {float(ld.get('loss_link', float('nan'))):.4f}")
     print(f"    loss_token {float(ld['loss_token']):.4f}  loss_geo {float(ld['loss_geo']):.4f}  "
           f"loss_total {float(total):.4f}")
     print("    (lech xa ly thuyet => mask hoac muc tieu sai; gan => duong du lieu dung)")
 
     print("\n" + "=" * 86)
-    print("TAT CA L1-L4 nhin DAT => chay huan luyen lai." if (ok1 and bad == 0 and ok3)
+    print("TAT CA L1-L4 DAT => chay huan luyen lai."
+          if (ok1 and bad == 0 and ok3 and ok4)
           else "CO TIEU CHI KHONG DAT -- khong huan luyen lai.")
     print("=" * 86)
 
