@@ -172,8 +172,12 @@ def main():
         q = np.percentile(vals, [50, 90, 99]) if vals.size else [float("nan")] * 3
         print(f"[*] rmsd_spread (A) tren {vals.size} lan lap: median={q[0]:.4f}  p90={q[1]:.4f}  p99={q[2]:.4f}")
         worst = sorted(spreads, key=lambda x: -(x[1] if x[1] == x[1] else -1))[:8]
-        print("    8 lan lech nhat (smiles, rmsd, n_atom) -- n_atom nho + rmsd lon => nhieu kha nang la")
-        print("    hoan vi thu tu nguyen tu cua fragment DOI XUNG, khong phai khac conformer that:")
+        # Muc 47: KHONG phai do hoan vi doi xung. Voi fragment 3 nguyen tu, moi nguyen tu cach tam
+        # <= ~1,5 A nen RMSD bi chan tren boi ~3 A du hoan vi the nao. Quan sat > 3 A chi co the la
+        # CONFORMER NGUON HONG (Muc 39.3: co fragment 3 nguyen tu span > 12 A). Day chinh la ly do
+        # medoid ton tai, va no dang lam dung viec: span ngoai lai trong template da chon = 0.
+        print("    8 lan lech nhat (smiles, rmsd, n_atom) -- rmsd > ~3 A tren fragment nho KHONG the")
+        print("    do hoan vi doi xung (chan tren ~3 A); do la conformer NGUON hong, xem Muc 39.3/47:")
         for sm, v in worst:
             print(f"        {sm[:40]:42} rmsd={v:7.3f}  n_atom={frag_dict[sm]['n_atoms']}")
         big = [(sm, v) for sm, v in spreads if v == v and v > 1.0]
