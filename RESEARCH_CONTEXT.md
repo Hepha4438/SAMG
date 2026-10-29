@@ -3229,3 +3229,38 @@ So sanh MAF vs diagonal (E1, hoan tu Rev 5) van la mot thi nghiem **mot bien** r
 * **Checkpoint cu phai duoc luu tru, khong xoa** (R12): chung thuoc tu vung cu va moi so o Muc 24-35 gan voi
   chung. Chuyen sang `saved_checkpoints_flow_OLD_vocab19033/` de `default_ckpt()` cua cac script do khong
   vo tinh lay nham.
+
+---
+
+## 40. Huan luyen lai (server, 2026-10-28, HEAD `428c835`): KHOI DONG DUNG, 25 epoch da chay
+Log: `logs/m20_train_maf.log`. Bon kiem dau run **deu dat**:
+`vocab_size: 3983` · `geo_head: maf  permutation ARN: tensor([0,1,2,3,4,5,6])` (P3a-1 co hieu luc) ·
+`Huan luyen TU DAU (khong resume)` · `Train 17.200 / Val 764`. Mo hinh 10,3 M tham so.
+⇒ Hai loi 40-pre da duoc sua dung. Day la checkpoint **dau tien** cua du an tren tu vung hoa hoc thuan
+(3.983 token) va thu tu fragment theo Frag2Seq.
+**Chua doc duoc:** quy dao `Token_Loss`/`Geo_Loss`, `val_total_loss`, epoch tot nhat — can phan duoi cua log.
+
+### 40.1. Buoc chan truoc khi sinh mau: do TRAN cua duong lap rap (khong can mo hinh)
+Can cu 39.2 (tai dung RMSD = 0,0000) + 37.3 (lap rap bang `reconstruct_from_generated`). Truoc khi quy bat ky
+sai lech nao cho mo hinh, phai biet **duong lap rap tu no mat bao nhieu**. Ba hang tren cung tap test:
+| hang | nguon toa do | do dieu gi |
+|---|---|---|
+| `reference` | doc thang SDF goc | moc that |
+| `gt_exact` | nhan that + `local_coords` tung lan xuat hien | **rieng** buoc lap rap (toa do chinh xac) |
+| `gt_template` | nhan that + template medoid | lap rap + xap xi mot-conformer = **TRAN TREN cua mo hinh** |
+`gt_template` la tran tren **that su**: khong mo hinh nao vuot qua duoc no, vi mo hinh dung **cung** template
+va **cung** duong lap rap, chi khac la pose do no du doan thay vi nhan that.
+**Tieu chi ghi cung:** `recon_success(gt_exact) >= 0,90` ⇒ di tiep; `< 0,70` ⇒ lap rap la nut that, sua truoc,
+**khong sinh mau**; `|QED(gt_exact) − QED(reference)| <= 0,05` ⇒ lap rap giu duoc hoa hoc.
+Ly do nguong: tu toa do **chinh xac**, suy lien ket la bai toan da giai (OpenBabel), nen moi that bai la mat
+mat **thuan** cua phuong phap. Con so tho duoc bao cao du the nao (quy uoc du an, R16 muc 3).
+
+### 40.2. Thieu sot kien truc phat hien khi thiet ke buoc sinh mau: **KHONG CO token EOS**
+`build_global_vocab` chi tao `{"[SOS]": 0, "[UNK]": 1}` roi them SMILES fragment. **Khong co `[EOS]`.**
+Them nua `pad_sequence(..., padding_value=0)` dung **cung id voi `[SOS]`**; may man la `target_ids` khong bao
+gio chua `[SOS]` nen `pad_mask = (target_ids != 0)` van dung, nhung day la su trung id nguy hiem.
+⇒ **Mo hinh khong co cach nao bao "phan tu da xong".** `step7` cu bu bang `max_len = 15` cung nhac — sinh du
+15 fragment cho moi phan tu, trong khi train trung binh **5,9** fragment/phan tu (101.791/17.200).
+**Tam thoi (cho lan nay):** lay do dai tu **phan phoi thuc nghiem so fragment/phan tu cua train**
+(quy uoc du an, R16 muc 3). **Ban sua that:** them `[EOS]` vao tu vung va vao `target_ids`, can chay lai step0
++ huan luyen lai ⇒ ghi vao Rev 21, khong gop vao lan nay.
