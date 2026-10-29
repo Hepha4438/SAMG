@@ -3681,3 +3681,74 @@ He qua cho lan huan luyen sap toi:
 ### 46.4 Int_Loss = 0.0001 co dinh
 
 Dung nhu cau hinh: `lambda_int = 0.0`. Khong phai loi.
+
+---
+
+## Muc 47 -- Kiem lai hai phep kiem da "DAT": L4 va rmsd_spread
+
+Ca `build_fragment_dict.py` lan `check_link_heads.py` deu tu tuyen bo DAT. Kiem lai thi mot cai
+**dat chat hon** script tuong, con mot cai **giai thich sai** nguyen nhan.
+
+### 47.1 L4 parent: ky vong ly thuyet bi tinh sai, mo hinh thuc ra khop gan nhu hoan hao
+
+Script in `ly thuyet ~ ln(so lua chon) trung binh = 1.2763`, quan sat `loss_parent = 1.0153`, va
+binh luan "gan". Lech 20% khong phai la "gan", nen toi tinh lai.
+
+Vi tri `t` co **`t+1`** lua chon (cot 0 = GOC, cot `1..t` = fragment truoc do). Cross-entropy duoc
+lay trung binh tren **moi** vi tri hop le, **ke ca `t=0`** -- vi tri `t=0` chi co dung mot lua chon
+nen dong gop `ln(1) = 0`. Dong 128 cu co dieu kien `and t >= 1`, tuc **loai `t=0` khoi ky vong nhung
+khong loai khoi CE**. Day la phep so sanh lech mau.
+
+Voi `lens = [4, 4, 3, 5, 9, 5, 3, 7]` (40 vi tri):
+
+| | gia tri |
+|---|---|
+| ky vong script in (loai `t=0`) | 1.2763 |
+| **ky vong dung (ke ca `t=0`)** | **1.0210** |
+| quan sat | 1.0153 |
+| lech so voi ky vong dung | **0.56%** |
+
+Nghia la head `parent` o khoi tao **khop phan bo dong deu gan nhu hoan hao** -- bang chung manh rang
+mask nhan qua va muc tieu deu dung, manh hon nhieu so voi ket luan mo ho cua script.
+
+Da sua: bo `and t >= 1`; them nguong tuyet doi **0,25 nat** cho ca ba head; va dua `ok4` vao ket luan
+cuoi (truoc day L4 **khong** tham gia quyet dinh -- chi in ra cho dep, vi pham R5: mot tieu chi khong
+the lam that bai thi khong phai tieu chi). Commit `512ba69`.
+
+`attach_self = 2.1963` va `attach_parent = 2.0422` so voi `ln(8) = 2.0794`: lech +0.117 va -0.037,
+deu trong pham vi sai so chuan voi 32 muc tieu hop le. Dat.
+
+### 47.2 rmsd_spread: thong ke DUNG, loi giai thich SAI -- va toi da sai truoc do
+
+Script liet ke `*O*` voi `rmsd = 6.250`, `n_atom = 3`, va giai thich la "hoan vi thu tu nguyen tu cua
+fragment DOI XUNG".
+
+Lap luan chan tren: fragment `*O*` co ba nguyen tu, lien ket ~1,4 A, nen sau khi tru trong tam moi
+nguyen tu cach goc <= ~1,5 A. Hai bo toa do deu nam trong qua cau ban kinh 1,5 A
+=> `||p_i - q_i|| <= 3 A` voi moi `i` => **RMSD <= ~3 A bat ke hoan vi nao**. Vay 6,250 A khong the
+do hoan vi.
+
+Toi da ket luan tu day rang **thong ke co loi**. Ket luan do **sai**, va bang chung bac bo nam ngay
+trong chu thich dong 128 cua chinh script: *"Muc 39.3 -- co truong hop span > 12 A tren fragment 3
+nguyen tu"*. Lap luan chan tren cua toi gia dinh **hoa hoc hop le**; du lieu nguon **khong** luon hop
+le. Voi mot conformer hong co span 12 A thi RMSD 6,25 A hoan toan kha di.
+
+Nen ket luan dung la: **thong ke chinh xac, cach doc cua script sai**, va con so 6,25 A la bang chung
+rang **medoid dang lam dung viec no sinh ra de lam** (Muc 39.4) -- 60/3981 fragment co medoid khac
+conformer dau > 0,5 A, va **ngoai lai hinh hoc trong template da chon = 0**.
+
+Da sua loi giai thich in ra, commit `5435ed8`. Khong doi thong ke.
+
+Bai hoc ghi lai: lap luan "bat kha thi ve hinh hoc" chi co gia tri khi du lieu dam bao hop le hoa hoc.
+Tren du lieu thuc, mot gia tri "bat kha thi" la dau hieu cua **du lieu hong**, truoc khi la dau hieu
+cua **code hong**.
+
+### 47.3 Do phu tu dien tren valid: doc cho dung pham vi
+
+- `do phu TU VUNG: 3981/3981 = 1.0000` -- **moi token mo hinh co the sinh ra deu co template.**
+  Day la con so quyet dinh cho **sinh mau**: khong bao gio gap token thieu template.
+- `do phu token valid = 0.9505`, `phan tu co DU moi fragment: 560/764 = 0.7330` -- hai con so nay chi
+  rang buoc thi nghiem **tran xap xi template** tren ground truth, vi 26,7% phan tu valid chua
+  fragment ngoai tu dien train. Khong rang buoc sinh mau.
+
+Khong duoc dung 0.7330 nhu mot gioi han tren cua chat luong sinh.
