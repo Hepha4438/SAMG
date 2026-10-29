@@ -3397,3 +3397,99 @@ thi noi nham token khac.
 truyen cung `target_7d`). Luc sinh mau: lay mau **toan bo chuoi token truoc**, roi mot forward **cuoi** voi
 `target_ids` = chuoi do va `target_7d=None` ⇒ toan bo 7D duoc sinh dung tren token cua chinh vi tri do,
 va chi ton `L+1` forward thay vi `2L`.
+
+---
+
+## 43. Sinh mau lan dau + chan doan pose (server, 2026-10-29/30, HEAD `f4d2d53` / `ea59aa7`)
+Logs: `logs/m23_gen_smoke.log` (10 hoc x 5 mau), `logs/m24_pose_error.log` (40 hoc, K=20).
+
+### 43.1. Sinh mau: 0/29 phan tu LIEN THONG
+```
+Validity (sanitize duoc) 29/50 = 0,58   |   LIEN THONG 0/29 = 0,0000
+dummy mo coi trung binh  8,41            (nhan that: 0,00 -- Muc 42)
+QED 0,4688 (tran 0,5583)  SA 3,8812 (tran 2,8077)  Novelty 1,0000
+```
+Voi ~5,9 fragment/phan tu (~10-12 diem gan), **8,41 mo coi** nghia la gan nhu **khong diem gan nao gap nhau**.
+Thu sinh ra la mot **dam fragment roi rac**, khong phai phan tu. Novelty 1,0000 la he qua tam thuong cua viec
+khong giong gi ca, khong phai thanh tich.
+⇒ **Dinh nghia Validity cu qua long** (mot dam fragment roi van sanitize duoc). Da tach lam hai, con so that
+la "sanitize VA lien thong".
+
+### 43.2. Chan doan (teacher forcing, token THAT, pose cua mo hinh) -- 40 hoc, K=20
+```
+sai so TAM fragment   tung mau      median 5,976 A   p90 10,184   mean 6,325
+                      trung binh K  median 3,464 A   p90  6,303   mean 3,797
+      do tan cua K mau quanh trung binh    4,944 A
+sai so GOC QUAY       tung mau      median 131,4 do  mean 125,7
+                      trung binh K  median 121,2 do  mean 122,6
+phan phoi `d`: mo hinh mean 5,167 std 2,551 | THAT (test) mean 3,383 std 1,615 | scaler (train) 5,161/2,478
+```
+
+**(C) Vuot nguong lap rap.** Nguong 1,5 A. Sai so tam **5,98 A** (tung mau), **3,46 A** (trung binh K).
+⇒ 0/29 lien thong **khong phai loi moi**, ma la he qua truc tiep. Doi chieu Muc 35.3: R2(d) = 0,099,
+std(d) = 2,478 ⇒ sai so du cua **rieng `d`** ~ 2,35 A, da vuot 1,5 A truoc khi tinh `theta`/`phi`.
+
+**(B) Phan ra bias/variance** (`sqrt(3,464² + 4,944²) = 6,04` khop `5,976` do duoc):
+variance **67%**, bias **33%**. Verdict tu dong cua script ("phan lon la do tan ⇒ sinh bang ky vong se cai
+thien ngay") **doc chua du**: dung la variance troi, nhung **bias con lai 3,46 A van gap 2,3 lan nguong 1,5 A**.
+⇒ Sinh bang ky vong la **can nhung khong du**. (Nguong `0,6 x` trong script la con so tro ly tu dat, khong co
+can cu -- vi pham R16; chi dung de phan loai tho, khong duoc doc nhu ket luan.)
+
+### 43.3. **PHEP QUAY KHONG PHAN BIET DUOC VOI NGAU NHIEN DEU** -- bang chung manh nhat tu truoc den nay
+Goc giua hai phep quay **ngau nhien deu** trong SO(3) (mat do `(1−cos t)/π` tren `[0, π]`):
+**mean = 126,5°, median = 132,3°**. Mo hinh do duoc: **mean 125,7°, median 131,4°**.
+⇒ **Trung khop.** Dau ra quay cua mo hinh **khong mang thong tin nao**. Day la phat bieu **dinh luong, don vi
+nhiem vu** cho ket luan dinh tinh da co tu A4/A5/25.4 ("phep quay khong chiu chi phoi cua hoc"), va manh hon
+tat ca cac phep do `delta R2` truoc day — khong can doi chung xao tron, khong can san nhieu.
+
+### 43.4. `d` cua mo hinh = PHAN PHOI BIEN cua train, khong phai phan phoi co dieu kien
+`d` sinh ra: mean **5,167**, std **2,551**. Scaler train: **5,161 / 2,478**. **Trung khit.**
+⇒ Mo hinh dang lay mau `d` tu **phan phoi bien da hoc tren train**, gan nhu khong dieu kien hoa theo hoc.
+Phu hop voi R2(d) = 0,099: ~90% phuong sai khong duoc giai thich.
+**Phat hien kem, moi:** `d` THAT tren test co mean **3,383** std **1,615** — **lech han** train (5,161/2,478).
+Day la **dich chuyen phan phoi train→test**, nhat quan voi split **theo thoi gian** cua Apo2Mol (Muc 41.4:
+do phu tu dien test 58% vs valid 73%). Mot bo du doan bien hoan hao cung se **lech he thong** tren test.
+Chua do tren valid; can doi chieu truoc khi quy hoan toan cho split thoi gian.
+
+### 43.5. Doc tong hop: ba nguyen nhan XEP CHONG, khong phai mot
+1. **Phep quay: ngau nhien** (43.3). Mot minh no da du lam lap rap that bai: dat dung tam nhung xoay sai
+   ~130° thi diem gan van khong gap nhau.
+2. **Tinh tien: gan nhu chi la phan phoi bien** (43.4), sai so tam 3,46 A ngay ca khi bo het do tan lay mau.
+3. **Lay mau tu phan phoi qua rong** (43.2): them 67% phuong sai len tren hai cai tren.
+Sua (3) la viec cua buoc **sinh**; sua (1) va (2) la viec cua **kien truc/bieu dien** — khong co cach nao
+sinh mau khon ngoan cuu duoc.
+
+### 43.6. He qua nghiem trong: NGAY CA TRAN DA CHUNG MINH cung khong du de lap rap
+Probe M11-a P2 (A6) dat `R2(d) = 0,2299` tren valid — day la muc trich tot nhat **da chung minh duoc**
+tu dau ra encoder dong bang. Quy ra sai so:
+```
+R2 = 0,2299  ⇒ sai so du cua `d` = 2,478 x sqrt(1 − 0,2299) = 2,17 A
+```
+**Van vuot nguong lap rap 1,5 A**, va do la moi rieng `d`, chua tinh `theta`/`phi`.
+⇒ **Sua C4 cho that tot, dat bang muc probe, VAN khong du de phan tu lien thong.** Khoang cach khong
+phai "mo hinh kem hon probe" (M12-a: khong ket luan) ma la **ca hai deu kem hon muc nhiem vu doi hoi**.
+
+### 43.7. Nguyen nhan GOC: bieu dien 7D KHONG CO KENH LIEN KET
+Chuoi `[fragment SMILES, d, θ, φ, quaternion]` **khong ma hoa** fragment nao noi voi fragment nao.
+Frag2Seq khoi phuc lien ket **bang hinh hoc** (va dinh ly surjective cua ho dung voi toa do **chinh xac**).
+Khi pose co sai so, **danh tinh phan tu bi mat**, khong chi pose bi lech:
+```
+nhan that  (pose chinh xac)   -> 255/255 lien thong, 0 dummy mo coi   (Muc 42)
+mo hinh    (sai so ~6 A)      ->   0/29  lien thong, 8,41 dummy mo coi
+```
+Day la **tinh chat cua bieu dien**, khong phai cua mo hinh: bieu dien doi do chinh xac pose <= ~1,5 A chi
+de phan tu **ton tai**. Moi mo hinh dung bieu dien nay deu phai vuot rao do truoc khi ban toi QED/Vina.
+⇒ Ba huong thoat, phai chon truoc khi huan luyen lai (Rev 21):
+* **(b) Them KENH LIEN KET vao bieu dien** — moi fragment ghi ro no gan vao fragment nao, tai diem gan nao.
+  Khi do do thi phan tu duoc **xac dinh boi token**, khong phu thuoc pose; pose chi con anh huong Vina,
+  khong anh huong **tinh hop le**. Can sua step0 + huan luyen lai. Day la cach cac mo hinh sinh theo
+  fragment thuong lam.
+* **(a) Nang do chinh xac pose** — 6D rotation (Zhou et al. 2019, CVPR, arXiv:1812.07035: bieu dien quay
+  trong khong gian <= 4 chieu, ke ca quaternion, **khong lien tuc** nhu ham tu SO(3) nen mang kho hoi quy;
+  6D thi lien tuc) + bo `v_context.detach()` (C4). Nhung 43.6 cho thay ngay ca muc probe cung chua du ⇒
+  rui ro cao, rieng no co the khong giai quyet duoc.
+* **(c) Noi long lap rap** — dung pose du doan lam **rang buoc** roi de truong luc dong lien ket. Giu duoc
+  bieu dien hien tai nhung lam nhoe ranh gioi "pose do mo hinh" va "pose do toi uu hoa".
+**Khuyen nghi cua tro ly: (b) truoc.** No lam cho "phan tu co hop le khong" **doc lap** voi do chinh xac
+pose, nen moi do luong ve sau (QED/SA/Vina) tro nen co nghia; va no re hon (a) ve rui ro. (a) van can,
+nhung nen do **sau** khi (b) tach bach duoc hai nguon loi.
