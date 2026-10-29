@@ -8,8 +8,16 @@ Ba hang, deu KHONG dung mo hinh, tren cung tap:
   2. `gt_exact`     -- nhan that + `local_coords` theo TUNG LAN XUAT HIEN  -> do RIENG buoc lap rap
                        (toa do chinh xac: Muc 39.2 tai dung RMSD = 0,0000)
   3. `gt_template`  -- nhan that + template MEDOID cua fragment_dict       -> + xap xi mot-conformer
-                       = **TRAN TREN that su cua mo hinh**: mo hinh dung CUNG template va CUNG duong
-                       lap rap, chi khac la pose do no du doan thay vi nhan that.
+
+**So sanh phai tren CUNG TAP PHAN TU.** `gt_template` that bai o moi phan tu chua fragment ngoai tu
+dien train; neu lay trung binh cua no tren tap con roi so voi `reference` tren tap day du thi chenh
+lech co the chi la "hai tap phan tu khac nhau", khong phai gia cua template. Nen bao cao hai lan:
+tren toan bo, va tren **TAP CHUNG** (complex ma ca ba hang deu thanh cong).
+
+**Do phu la mot so RIENG, khong phai that bai cua lap rap.** Tu vung dung tu TRAIN, nen phan tu test
+chua fragment la khong co template -- nhung mo hinh **cung khong bao gio sinh ra** fragment do
+(do phu TU VUNG = 100%, Muc 38.3). Vi vay tran tren cua mo hinh la `gt_template` **tren tap duoc phu**,
+con ty le khong duoc phu la mot gioi han rieng: phan test ma tu vung cua mo hinh khong voi toi.
 
 Lap rap: `src/assemble.py` cua du an (khong dung Apo2Mol -- server khong co repo do; va ham cua ho
 vut bo lien ket roi suy lai bang OpenBabel, trong khi ta DA BIET lien ket trong tung fragment).
@@ -101,8 +109,10 @@ def build_molecule(pkl_data, frag_dict=None):
     return asm.assemble(placed)
 
 
-def summarize(name, rows, n_attempt, errs=None):
-    ok = [r for r in rows if r is not None]
+def summarize(name, rows, n_attempt, errs=None, idx=None):
+    """idx=None => tinh tren moi hang thanh cong. idx=tap chi so => chi tinh tren cac chi so do."""
+    sel = range(len(rows)) if idx is None else sorted(idx)
+    ok = [rows[i] for i in sel if rows[i] is not None]
     rate = len(ok) / max(n_attempt, 1)
     print(f"\n  [{name}]  thanh cong {len(ok)}/{n_attempt} = {rate:.4f}")
     if errs:
@@ -152,6 +162,7 @@ def main():
     rows = {"reference": [], "gt_exact": [], "gt_template": []}
     errs = {"gt_exact": [], "gt_template": []}
     diags = {"gt_exact": [], "gt_template": []}
+    covered = set()          # complex ma MOI fragment deu co trong tu dien train
     n_attempt = 0
     for e in splits.get(args.split, []):
         if args.n and n_attempt >= args.n:
@@ -167,6 +178,8 @@ def main():
         if any(not it.get("frag_frame_stable", True) for it in d["sequence"]):
             continue
         n_attempt += 1
+        if all(it["smiles"] in frag_dict for it in d["sequence"]):
+            covered.add(n_attempt - 1)
 
         try:
             m = Chem.SDMolSupplier(os.path.join(st.DATASET_DIR, e[2]))[0]
@@ -196,6 +209,25 @@ def main():
     s_ex = summarize("gt_exact    (nhan that + local_coords tung lan)", rows["gt_exact"], n_attempt, errs["gt_exact"])
     s_tm = summarize("gt_template (nhan that + template medoid)", rows["gt_template"], n_attempt, errs["gt_template"])
 
+    # --- DO PHU: mot so RIENG, khong phai that bai cua lap rap -------------------------------
+    cov = len(covered) / max(n_attempt, 1)
+    print("\n" + "-" * 92)
+    print(f"  DO PHU TU DIEN tren {args.split}: {len(covered)}/{n_attempt} = {cov:.4f} phan tu co MOI "
+          f"fragment trong tu dien train.")
+    print(f"  Phan con lai ({n_attempt - len(covered)}) chua fragment chi xuat hien o {args.split}. Mo hinh")
+    print(f"  **khong bao gio sinh ra** chung (do phu TU VUNG = 100%, Muc 38.3) ⇒ day la gioi han RIENG:")
+    print(f"  phan cua {args.split} ma tu vung cua mo hinh khong voi toi, KHONG phai loi lap rap.")
+
+    # --- TAP CHUNG: ca ba hang deu thanh cong -> so sanh moi hop le ---------------------------
+    common = {i for i in range(n_attempt)
+              if all(rows[k][i] is not None for k in ("reference", "gt_exact", "gt_template"))}
+    print("\n" + "-" * 92)
+    print(f"  SO SANH TREN TAP CHUNG ({len(common)}/{n_attempt} complex ca ba hang deu thanh cong) --")
+    print("  day moi la phep so hop le: cung tap phan tu, chi khac nguon toa do.")
+    c_ref = summarize("reference   [tap chung]", rows["reference"], len(common), idx=common)
+    c_ex = summarize("gt_exact    [tap chung]", rows["gt_exact"], len(common), idx=common)
+    c_tm = summarize("gt_template [tap chung]", rows["gt_template"], len(common), idx=common)
+
     for key in ("gt_exact", "gt_template"):
         if diags[key]:
             nm = np.array([x["n_manh"] for x in diags[key]])
@@ -220,13 +252,17 @@ def main():
         dq = abs(s_ex["QED_mean"] - s_ref["QED_mean"])
         print(f"    T2 |QED(gt_exact) - QED(reference)| = {dq:.4f}  (nguong {QED_TOL})"
               f"  => {'DAT' if dq <= QED_TOL else 'KHONG DAT: lap rap lam doi hoa hoc'}")
-    if s_tm.get("n") and s_ex.get("n"):
-        print(f"    T3 gia cua xap xi mot-conformer: recon_success {s_ex['recon_success']:.4f} -> "
-              f"{s_tm['recon_success']:.4f}; QED {s_ex['QED_mean']:.4f} -> {s_tm['QED_mean']:.4f}")
-        print("       (gt_template la TRAN TREN cua mo hinh -- khong mo hinh nao vuot qua)")
+    if c_tm.get("n") and c_ex.get("n"):
+        print(f"    T3 gia cua xap xi mot-conformer, TREN TAP CHUNG ({len(common)} complex):")
+        for k in ["QED", "SA", "logP", "Lipinski"]:
+            print(f"       {k:9} gt_exact {c_ex[k + '_mean']:8.4f} -> gt_template {c_tm[k + '_mean']:8.4f}"
+                  f"   (lech {c_tm[k + '_mean'] - c_ex[k + '_mean']:+.4f})")
+        print(f"       `gt_template [tap chung]` la TRAN TREN cua mo hinh tren phan test ma tu vung voi toi.")
 
     out = {"split": args.split, "n_attempt": n_attempt, "head": head,
-           "reference": s_ref, "gt_exact": s_ex, "gt_template": s_tm}
+           "coverage": cov, "n_covered": len(covered), "n_common": len(common),
+           "toan_bo": {"reference": s_ref, "gt_exact": s_ex, "gt_template": s_tm},
+           "tap_chung": {"reference": c_ref, "gt_exact": c_ex, "gt_template": c_tm}}
     dst = os.path.join(SAMG_ROOT, "logs", f"assembly_ceiling_{args.split}.json")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with open(dst, "w") as f:
