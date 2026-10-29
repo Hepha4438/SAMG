@@ -63,7 +63,7 @@ def main():
 
     # ---------------------------------------------------------------- K5
     print("\n" + "=" * 90 + "\nK5: parent[t] < t o moi t>=1, parent[0] == -1\n" + "=" * 90)
-    n_mol, n_bad_root, n_pos, n_bad_pos, modes = 0, 0, 0, 0, Counter()
+    n_mol, n_bad_root, n_pos, n_bad_pos, n_extra_root, modes = 0, 0, 0, 0, 0, Counter()
     for split in ["train", "valid", "test"]:
         for e in splits.get(split, []):
             p = pkl_by_id.get(e[2].split("/")[0])
@@ -80,11 +80,18 @@ def main():
                 n_bad_root += 1
             for t, it in enumerate(seq[1:], start=1):
                 n_pos += 1
-                if not (0 <= it["parent"] < t):
+                # Muc 45.1: `parent == -1` o t>=1 la GOC MOI -- hop le khi ligand co nhieu thanh phan
+                # roi nhau (muoi/doi ion trong SDF) ⇒ do thi fragment la RUNG, khong phai cay. Q1 do
+                # tren 1.894 phan tu khong gap ca nao; tren 23.660 thi co.
+                if it["parent"] == -1:
+                    n_extra_root += 1
+                elif not (0 <= it["parent"] < t):
                     n_bad_pos += 1
     print(f"    phan tu kiem: {n_mol}  |  frag_order_mode: {dict(modes)}")
     print(f"    goc co parent != -1: {n_bad_root}")
     print(f"    vi tri t>=1 co parent khong hop le: {n_bad_pos}/{n_pos} = {n_bad_pos / max(n_pos, 1):.6f}")
+    print(f"    goc moi (parent=-1 o t>=1, ligand nhieu thanh phan): {n_extra_root}/{n_pos} = "
+          f"{n_extra_root / max(n_pos, 1):.6f}  -- HOP LE, xem Muc 45.1")
     k5 = (n_bad_root == 0 and n_bad_pos == 0 and n_mol > 0)
     print(f"    => K5 {'DAT' if k5 else 'KHONG DAT'}")
     if not k5:
@@ -145,7 +152,7 @@ def main():
     print("\n" + "=" * 90)
     print("K8: tai dung tu KENH LIEN KET (khong dung hinh hoc lien-fragment) -> do thi trung phan tu goc")
     print("=" * 90)
-    n_try, n_match, errs = 0, 0, []
+    n_try, n_match, n_match_stereo, errs = 0, 0, 0, []
     for split in ["train", "valid", "test"]:
         for e in splits.get(split, []):
             if args.k8_n and n_try >= args.k8_n:
@@ -169,18 +176,27 @@ def main():
                           "attach_self": it["attach_self"], "attach_parent": it["attach_parent"]}
                          for it in d["sequence"]]
                 mol, diag = asm.assemble_by_channel(items)
-                a = Chem.MolToSmiles(Chem.MolFromSmiles(Chem.MolToSmiles(mol)) or mol)
-                b = Chem.MolToSmiles(ref)
-                if a == b:
+                # Muc 45.3: tieu chi chinh so DO THI CAU TAO (bo lap the). Lap the cua ban lap rap
+                # phu thuoc thu tu hang xom quanh tam bat doi, ma thu tu do doi khi ta bo dummy va
+                # them lien ket moi ⇒ so SMILES CO lap the la do SAI dai luong (cung loai loi T3).
+                # Lap the bao cao RIENG.
+                a_c = Chem.MolToSmiles(mol, isomericSmiles=False)
+                b_c = Chem.MolToSmiles(ref, isomericSmiles=False)
+                if a_c == b_c:
                     n_match += 1
+                    if Chem.MolToSmiles(mol) == Chem.MolToSmiles(ref):
+                        n_match_stereo += 1
                 else:
-                    errs.append(f"do thi khac (n_manh={diag['n_manh']}, link_fail={diag['n_link_that_bai']})")
+                    errs.append(f"do thi cau tao khac (n_manh={diag['n_manh']}, "
+                                f"link_fail={diag['n_link_that_bai']})")
             except Exception as exc:
                 errs.append(f"{type(exc).__name__}: {str(exc)[:60]}")
         if args.k8_n and n_try >= args.k8_n:
             break
     rate = n_match / max(n_try, 1)
-    print(f"    trung khop: {n_match}/{n_try} = {rate:.4f}  (nguong {K8_THRESHOLD})")
+    print(f"    trung khop DO THI CAU TAO: {n_match}/{n_try} = {rate:.4f}  (nguong {K8_THRESHOLD})")
+    print(f"    trung khop ca LAP THE:     {n_match_stereo}/{n_try} = {n_match_stereo / max(n_try, 1):.4f}"
+          f"   (bao cao, khong phai nguong -- xem Muc 45.3)")
     for k, v in Counter(errs).most_common(5):
         print(f"      {k[:76]:78} x{v}")
     k8 = rate >= K8_THRESHOLD
