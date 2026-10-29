@@ -260,6 +260,7 @@ class SAMGDataPreprocessor:
                     coords_canon = coords[order]
                     frag_frame_stable = True
                 except Exception:
+                    ranks = list(range(frag.GetNumAtoms()))
                     order = np.arange(frag.GetNumAtoms())
                     coords_canon = coords
                     frag_frame_stable = False
@@ -270,15 +271,81 @@ class SAMGDataPreprocessor:
             frag_data.append({"smiles": canonical_smiles, "coords": coords, "coords_canon": coords_canon,
                               "atomic_nums": atomic_nums, "center": np.mean(coords, axis=0),
                               "frag_frame_stable": frag_frame_stable,
-                              "sort_key": frag_sort_keys[frag_i]})
+                              "sort_key": frag_sort_keys[frag_i],
+                              "ranks": list(ranks)})
 
-        # N1: sap theo thu tu xuat hien trong canonical SMILES cua ca phan tu; smiles la khoa phu de
-        # tat dinh khi hai fragment co cung first-ranked atom (khong xay ra voi CanonicalRankAtoms
-        # breakTies mac dinh, nhung giu cho chac).
+        # ---------------- S5 (Rev 21): KENH LIEN KET + thu tu DFS canonical --------------------
+        # Muc 44.2: thu tu canonical cua Frag2Seq KHONG dam bao cha xuat hien truoc (34,7% vi tri vi
+        # pham) vi Frag2Seq khoi phuc lien ket bang HINH HOC chu khong bang thu tu chuoi. Ta can ca
+        # hai, nen dung DFS canonical tren cay fragment (Jin et al. 2018, JT-VAE -- WORKING_RULES G5c).
+        loc = {}                                   # chi so trong fragmented_mol -> (frag_i, chi so cuc bo)
+        for fi, idxs in enumerate(frag_atom_idx):
+            for li, a in enumerate(idxs):
+                loc[a] = (fi, li)
+        conf_fm = fragmented_mol.GetConformer()
+        pos_fm = np.array([conf_fm.GetAtomPosition(i) for i in range(fragmented_mol.GetNumAtoms())])
+
+        def canon_dummy_index(real_atom, partner_atom):
+            """Chi so CANONICAL cua nguyen tu dummy (trong fragment chua `real_atom`) ung voi lien ket
+            bi cat toi `partner_atom`. Mot nguyen tu co the co NHIEU lien ket bi cat ⇒ nhieu dummy;
+            phan biet bang VI TRI: FragmentOnBonds dat dummy dung tai toa do cua nguyen tu dau kia."""
+            fi, _ = loc[real_atom]
+            best, best_d = None, None
+            for nb in fragmented_mol.GetAtomWithIdx(int(real_atom)).GetNeighbors():
+                j = nb.GetIdx()
+                if nb.GetAtomicNum() != 0 or j not in loc or loc[j][0] != fi:
+                    continue
+                dist = float(np.linalg.norm(pos_fm[j] - pos_fm[partner_atom]))
+                if best_d is None or dist < best_d:
+                    best, best_d = j, dist
+            if best is None:
+                return None
+            return int(frag_data[fi]["ranks"][loc[best][1]])
+
+        edges = []                                  # (fi_a, fi_b, dummy_canon_a, dummy_canon_b)
+        for bi in bonds_to_break:
+            b = mol.GetBondWithIdx(int(bi))
+            a1, a2 = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
+            if a1 not in loc or a2 not in loc or loc[a1][0] == loc[a2][0]:
+                continue
+            d1, d2 = canon_dummy_index(a1, a2), canon_dummy_index(a2, a1)
+            if d1 is None or d2 is None:
+                continue
+            edges.append((loc[a1][0], loc[a2][0], d1, d2))
+
+        adj = {i: [] for i in range(len(frags))}
+        for fa, fb, da, db in edges:
+            adj[fa].append((fb, da, db))            # tu fa sang fb: dummy cua fa la da, cua fb la db
+            adj[fb].append((fa, db, da))
+
+        # Goc = fragment chua nguyen tu co canonical rank 0 (tat dinh, bat bien dong cau).
+        root = 0
         if frag_order_mode == "frag2seq_canonical_appearance":
-            frag_data.sort(key=lambda x: (x["sort_key"], x["smiles"]))
-        else:
-            frag_data.sort(key=lambda x: x["smiles"])
+            root = int(np.argmin(frag_sort_keys))
+        dfs_order, parent_of, attach_of = [], {root: -1}, {root: (-1, -1)}
+        stack = [root]
+        seen = {root}
+        while stack:                                 # DFS, con duyet theo rank nho nhat
+            u = stack.pop()
+            dfs_order.append(u)
+            kids = sorted((v for v, _, _ in adj[u] if v not in seen),
+                          key=lambda v: (frag_sort_keys[v], frag_data[v]["smiles"]))
+            for v in reversed(kids):                 # reversed: pop() lay con rank nho nhat truoc
+                if v in seen:
+                    continue
+                seen.add(v)
+                du_v = next((dv, du) for w, du, dv in adj[u] if w == v)
+                parent_of[v] = u
+                attach_of[v] = du_v                  # (dummy cua CHINH no, dummy cua CHA)
+                stack.append(v)
+        for fi in range(len(frags)):                 # fragment khong noi duoc (khong xay ra neu la cay)
+            if fi not in seen:
+                dfs_order.append(fi)
+                parent_of[fi], attach_of[fi] = -1, (-1, -1)
+        pos_of = {fi: p for p, fi in enumerate(dfs_order)}
+        frag_data = [dict(frag_data[fi], _fi=fi) for fi in dfs_order]
+        frag_order_mode = ("dfs_canonical" if frag_order_mode == "frag2seq_canonical_appearance"
+                            else "fallback_smiles_alphabetical")
 
         pocket_coords, atom_names = self._load_pocket_geometry(apo_pocket_path)
         R_m_to_w, t_m_to_w, frame_stable, frame_diag = self._get_pocket_frame(pocket_coords, atom_names)
@@ -294,11 +361,19 @@ class SAMGDataPreprocessor:
             # dung phan tu 3D ma KHONG can ETKDG (Frag2Seq muc 3.3.1). Truoc Rev 20 bi tinh roi vut.
             # Nghich dao o Step 7: atom_world = R_m_to_w @ R_g_to_m @ (local - local.mean(0)) + center_world
             local_coords = np.dot(R_g_to_w.T, (f["coords_canon"] - t_g_to_w).T).T
+            _fi = f["_fi"]
+            _par = parent_of.get(_fi, -1)
+            _as, _ap = attach_of.get(_fi, (-1, -1))
             sequence.append({"smiles": f["smiles"],
                              "spatial_tokens": [d, theta, phi, float(qw), float(qx), float(qy), float(qz)],
                              "frag_frame_stable": f["frag_frame_stable"],
                              "local_coords": local_coords.astype(np.float32),
-                             "atomic_nums": f["atomic_nums"]})
+                             "atomic_nums": f["atomic_nums"],
+                             # S5b: kenh lien ket -- do thi phan tu duoc xac dinh boi TOKEN, khong phu
+                             # thuoc do chinh xac pose (Muc 43.7).
+                             "parent": int(pos_of[_par]) if _par >= 0 else -1,
+                             "attach_self": int(_as),
+                             "attach_parent": int(_ap)})
         # Muc 38.6: pocket_R/pocket_t PHAI do chinh step0 ghi. Truoc Rev 20 chung do script
         # migration `add_pocket_frame_to_pkl.py` (P2a-3) them vao SAU, nen moi lan chay lai step0
         # la mat ⇒ step6 loi KeyError. R_m_to_w/t_m_to_w da co san ngay tai day va la CUNG mot frame
