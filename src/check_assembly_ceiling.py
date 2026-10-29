@@ -47,7 +47,8 @@ sys.path.insert(0, CURRENT_DIR)
 # KHONG du -- da thu, bao `No module named 'utils.reconstruct'`: namespace package `utils` duoc
 # phan giai tu mot muc sys.path va khong gop them. Nen dung goi `utils` TUONG MINH voi __path__
 # tro toi CA HAI cay, dat TRUOC moi import khac de khong bi cache ban nao chen truoc.
-_UTILS_PATHS = [os.path.join(SAMG_ROOT, "src", "utils"), os.path.join(SAMG_ROOT, "Apo2Mol", "utils")]
+_APO = os.path.join(SAMG_ROOT, "Apo2Mol")
+_UTILS_PATHS = [os.path.join(SAMG_ROOT, "src", "utils"), os.path.join(_APO, "utils")]
 if "utils" not in sys.modules:
     _m = types.ModuleType("utils")
     _m.__path__ = _UTILS_PATHS
@@ -56,6 +57,33 @@ else:
     for _p in _UTILS_PATHS:
         if _p not in list(getattr(sys.modules["utils"], "__path__", [])):
             sys.modules["utils"].__path__.append(_p)
+
+
+def load_apo2mol(mod_name, rel_path):
+    """Nap mot module cua Apo2Mol THEO DUONG DAN TEP, khong qua PathFinder.
+    Dat `utils.__path__` tro toi ca hai cay VAN khong du (da thu: `utils.data` cua SAMG nap duoc
+    nhung `utils.reconstruct` cua Apo2Mol thi khong). Nap tuong minh thi loi that -- vi du thieu
+    `openbabel` -- hien ra dung ten, thay vi bi che bang ModuleNotFoundError('utils.reconstruct').
+    Dang ky truoc vao sys.modules de cac module sau (`scoring_func` import `sascorer`) dung lai."""
+    import importlib.util
+    path = os.path.join(_APO, rel_path)
+    if not os.path.exists(path):
+        raise SystemExit(f"[!] Khong thay {path} -- kiem tra repo Apo2Mol o {_APO}")
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            f"[!] Nap {rel_path} that bai: thieu goi `{exc.name}`.\n"
+            f"    Cac tien ich danh gia cua Apo2Mol can them phu thuoc ngoai env `samg` hien tai.\n"
+            f"    reconstruct.py can `openbabel`; docking_vina.py can them `meeko`, `vina`, `AutoDockTools`.\n"
+            f"    Cai (conda-forge thuong de nhat cho openbabel):\n"
+            f"        conda install -y -c conda-forge openbabel\n"
+            f"        pip install meeko vina"
+        ) from exc
+    return mod
 
 RECON_OK_HI, RECON_OK_LO = 0.90, 0.70
 QED_TOL = 0.05
@@ -96,13 +124,24 @@ def place_fragments(pkl_data, frag_dict=None):
     return np.concatenate(xyz_all, 0), np.concatenate(z_all, 0)
 
 
+_SCORE = {}
+
+
+def init_scoring():
+    """Nap sascorer TRUOC roi dang ky duoi ten `utils.evaluation.sascorer`, de khi nap scoring_func
+    (no lam `from utils.evaluation.sascorer import compute_sa_score`) Python lay thang tu sys.modules."""
+    sasc = load_apo2mol("utils.evaluation.sascorer", "utils/evaluation/sascorer.py")
+    sf = load_apo2mol("apo2mol_scoring_func", "utils/evaluation/scoring_func.py")
+    _SCORE["sa"] = sasc.compute_sa_score
+    _SCORE["lipinski"] = sf.obey_lipinski
+    _SCORE["logp"] = sf.get_logp
+
+
 def chem_metrics(mol):
     """QED, SA, logP, Lipinski -- dung ham cua Apo2Mol (R14)."""
     from rdkit.Chem.QED import qed
-    from utils.evaluation.sascorer import compute_sa_score
-    from utils.evaluation.scoring_func import obey_lipinski, get_logp
-    return {"QED": float(qed(mol)), "SA": float(compute_sa_score(mol)),
-            "logP": float(get_logp(mol)), "Lipinski": float(obey_lipinski(mol))}
+    return {"QED": float(qed(mol)), "SA": float(_SCORE["sa"](mol)),
+            "logP": float(_SCORE["logp"](mol)), "Lipinski": float(_SCORE["lipinski"](mol))}
 
 
 def summarize(name, rows, n_attempt):
@@ -138,8 +177,9 @@ def main():
     import step6_trainer as st
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
-    from utils.reconstruct import reconstruct_from_generated
+    reconstruct_from_generated = load_apo2mol("apo2mol_reconstruct", "utils/reconstruct.py").reconstruct_from_generated
 
+    init_scoring()
     with open(os.path.join(st.PROCESSED_DIR, "fragment_dict.pkl"), "rb") as f:
         frag_dict = pickle.load(f)
     print(f"[*] fragment_dict: {len(frag_dict)} SMILES")
