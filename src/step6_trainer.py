@@ -3,6 +3,7 @@ import glob
 import pickle
 import argparse
 import subprocess
+import numpy as np
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -42,6 +43,7 @@ from datasets.pl_data import ApoHoloLigandData, torchify_dict
 from step1_protein_encoder import DynamicEGNN, StaticEGNN
 from step4_ligand_generator import DualStreamLigandGenerator
 from step5_constraints_and_loss import GlobalLoss
+from step4_ligand_generator import MAX_ATTACH
 
 
 class SAMGOptimizedDataset(Dataset):
@@ -191,6 +193,42 @@ class SAMGOptimizedDataset(Dataset):
         data.input_ids = torch.tensor(input_ids_list[:-1], dtype=torch.long)
         data.target_ids = torch.tensor(input_ids_list[1:], dtype=torch.long)
         data.target_7d = torch.tensor(target_7d_list[1:], dtype=torch.float)
+
+        # S7 (Rev 21): muc tieu cho ba head kenh lien ket.
+        #  * `parent`: 0 = GOC, j+1 = fragment o vi tri j. step0 luu -1 cho goc (Muc 45.1: ligand
+        #    nhieu thanh phan co the co nhieu goc).
+        #  * `attach_*`: step0 luu CHI SO NGUYEN TU CANONICAL cua dummy, chay den ~20 va phu thuoc
+        #    kich co fragment. Head chi co MAX_ATTACH lop, nen o day doi sang THU TU CUA DUMMY trong
+        #    so cac dummy cua fragment (atomic_num == 0), sap theo chi so canonical. Khong can chay
+        #    lai step0: `atomic_nums` da luu san theo dung thu tu canonical.
+        #  * -100 = bo qua (goc khong co cha/diem gan; hoac gia tri ngoai pham vi head).
+        def _ord_in(frag_item, canon_idx):
+            """Thu tu cua nguyen tu dummy `canon_idx` trong so CAC DUMMY cua fragment do."""
+            if canon_idx is None or canon_idx < 0:
+                return -100
+            z = np.asarray(frag_item["atomic_nums"]).reshape(-1)
+            dummies = [i for i, zz in enumerate(z) if int(zz) == 0]
+            if canon_idx not in dummies:
+                return -100
+            o = dummies.index(canon_idx)
+            return o if o < MAX_ATTACH else -100
+
+        par, asf, apa = [], [], []
+        for item in sequence_7d:
+            p_ = item.get("parent", -1)
+            if p_ is None or p_ < 0:
+                par.append(0)                     # lop 0 = GOC
+                asf.append(-100)
+                apa.append(-100)
+                continue
+            par.append(int(p_) + 1)
+            # `attach_self` la dummy cua CHINH fragment nay; `attach_parent` la dummy cua fragment CHA
+            # ⇒ phai tra theo `atomic_nums` cua ĐÚNG fragment tuong ung.
+            asf.append(_ord_in(item, item.get("attach_self", -1)))
+            apa.append(_ord_in(sequence_7d[int(p_)], item.get("attach_parent", -1)))
+        data.link_parent = torch.tensor(par, dtype=torch.long)
+        data.link_attach_self = torch.tensor(asf, dtype=torch.long)
+        data.link_attach_parent = torch.tensor(apa, dtype=torch.long)
         data.seq_len = len(input_ids_list) - 1
 
         # Dọn rác
@@ -238,7 +276,8 @@ class SAMGLightningModule(pl.LightningModule):
             lambda_geo=config.loss_weights.geo, 
             lambda_pocket=config.loss_weights.pocket, 
             lambda_int=config.loss_weights.int, 
-            d_threshold=config.loss_weights.d_threshold
+            d_threshold=config.loss_weights.d_threshold,
+            lambda_link=config.loss_weights.get("link", 1.0)
         )
 
     def build_ligand_input(self, data_batch, device, num_graphs):
@@ -351,10 +390,17 @@ class SAMGLightningModule(pl.LightningModule):
         target_ids = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_ids, lens)), batch_first=True, padding_value=0).to(device)
         target_7d = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_7d, lens)), batch_first=True, padding_value=0.0).to(device)
 
-        logits_vocab, loss_geo_raw, sampled_7d, _ = self.generator(
+        logits_vocab, loss_geo_raw, sampled_7d, _, link_logits = self.generator(
             input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask,
             target_ids=target_ids  # P2c: teacher forcing cho geometric head (xem step4_ligand_generator.py)
         )
+        # S7: pad muc tieu kenh lien ket bang -100 (= bo qua trong cross_entropy), KHONG bang 0
+        # (0 la lop "goc" hop le, pad bang 0 se day mo hinh doan "goc" o moi vi tri dem).
+        _pad = lambda x: torch.nn.utils.rnn.pad_sequence(
+            list(torch.split(x, lens)), batch_first=True, padding_value=-100).to(device)
+        link_targets = {"parent": _pad(data_batch.link_parent),
+                        "attach_self": _pad(data_batch.link_attach_self),
+                        "attach_parent": _pad(data_batch.link_attach_parent)}
 
         # --- ĐỒNG BỘ KÍCH THƯỚC ĐỘNG GIỮA PREDICTION VÀ TARGET (ĐẶC BIỆT TÁCH BẠCH PROTEIN VS LIGAND) ---
         num_res_pred = step1_outputs['pred_res_tr'].size(0)
@@ -384,7 +430,8 @@ class SAMGLightningModule(pl.LightningModule):
             step1_outputs['pred_res_tr'].unsqueeze(0), target_tr, 
             step1_outputs['pred_res_rot'].unsqueeze(0), target_q,
             step1_outputs['pred_res_chi'].unsqueeze(0), target_chi, 
-            chi_mask, data_batch.ligand_pos, data_batch.protein_pos
+            chi_mask, data_batch.ligand_pos, data_batch.protein_pos,
+            link_logits=link_logits, link_targets=link_targets
         )
         return total_loss, loss_dict
 
@@ -466,7 +513,9 @@ if __name__ == "__main__":
         "loss_weights": {
             # "int": 0.0 vì L_Int hiện dùng ligand_pos ground-truth -> gradient
             # = 0. Bật lại khi nối 3D Assembler vào training.
-            "token": 1.0, "geo": 1.0, "pocket": 1.0, "int": 0.0, "d_threshold": 2.5
+            "token": 1.0, "geo": 1.0, "pocket": 1.0, "int": 0.0, "d_threshold": 2.5,
+            # S7 (Rev 21): trong so ba loss kenh lien ket. 1,0 = quy uoc du an (R16 muc 3).
+            "link": 1.0
         }
     })
 
