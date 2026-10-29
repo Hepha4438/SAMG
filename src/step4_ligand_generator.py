@@ -22,6 +22,10 @@ from step3_attention_hub import MultiDifferentialCrossAttention
 # phải regularizer tùy ý; có thể anneal giảm dần sau khi huấn luyện đã ổn định.
 DEQUANT_SIGMA = 0.1
 
+# S6 (Rev 21): so lop cua head "diem gan". Do duoc o Muc 44.4: max 5 dummy/fragment, p99 = 3
+# (tren 1.894 phan tu). Lay 8 de du bien an toan cho fragment hiem chua gap.
+MAX_ATTACH = 8
+
 class PositionalEncoding(nn.Module):
     def __init__(self, hidden_dim, max_len=5000):
         super().__init__()
@@ -72,6 +76,19 @@ class DualStreamLigandGenerator(nn.Module):
         # context của geometric head, rồi chiếu 2*hidden_dim -> hidden_dim.
         self.geo_in_proj = nn.Linear(hidden_dim * 2, hidden_dim)
 
+        # S6 (Rev 21, Muc 44.5): KENH LIEN KET -- ba head rieng, KHONG xen vao chuoi token.
+        # Chuoi giu nguyen do dai nen 7D van 1-1 voi vi tri ⇒ khong dong gi vao duong hinh hoc
+        # da duoc xac nhan sach (Muc 42). Tinh hop le dam bao bang CHE luc sinh, khong bang hoc.
+        #   parent_*     : con tro tro ve mot vi tri TRUOC do (hoac "goc").
+        #   attach_*_head: thu tu cua nguyen tu dummy TRONG SO CAC DUMMY cua fragment (0..MAX_ATTACH-1),
+        #                  KHONG phai chi so nguyen tu canonical (chi so do chay den ~20 va phu thuoc
+        #                  kich co fragment). Do duoc (Muc 44.4): max 5 dummy/fragment, p99 = 3.
+        self.parent_q = nn.Linear(hidden_dim, hidden_dim)
+        self.parent_k = nn.Linear(hidden_dim, hidden_dim)
+        self.root_score = nn.Parameter(torch.zeros(1))
+        self.attach_self_head = nn.Linear(hidden_dim, MAX_ATTACH)
+        self.attach_parent_head = nn.Linear(hidden_dim, MAX_ATTACH)
+
         # Đăng ký Tensor vật lý được trích xuất từ Dataset
         if shift_factors is None: shift_factors = torch.zeros(7)
         if scale_factors is None: scale_factors = torch.ones(7)
@@ -119,6 +136,21 @@ class DualStreamLigandGenerator(nn.Module):
             tok_emb = self.token_embedding(sampled_ids)
 
         geo_in = self.geo_in_proj(torch.cat([v_context_detached, tok_emb.detach()], dim=-1))
+
+        # S6: ba head kenh lien ket. Dung CUNG `geo_in` voi geometric head -- no da mang ca ngu canh
+        # (token < t) lan danh tinh cua fragment dang sinh (P2c), dung thu can de doan diem gan.
+        # `frag_repr[j]` = bieu dien cua fragment TAI vi tri j (tok_emb + positional), lam KEY cho
+        # con tro cha. Mask j >= t: cha phai xuat hien TRUOC (bao dam boi thu tu DFS, Muc 44.3).
+        frag_repr = self.positional_encoding(tok_emb)
+        q = self.parent_q(geo_in)                                   # [B, T, H]
+        k = self.parent_k(frag_repr)                                # [B, T, H]
+        scores = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.hidden_dim)   # [B, T, T]
+        causal = torch.arange(seq_len, device=device)
+        scores = scores.masked_fill(causal.view(1, 1, -1) >= causal.view(1, -1, 1), float("-inf"))
+        root = self.root_score.view(1, 1, 1).expand(batch_size, seq_len, 1)
+        logits_parent = torch.cat([root, scores], dim=-1)            # [B, T, 1+T]; cot 0 = "goc"
+        logits_attach_self = self.attach_self_head(geo_in)           # [B, T, MAX_ATTACH]
+        logits_attach_parent = self.attach_parent_head(geo_in)
         geo_in_flat = geo_in.view(batch_size * seq_len, self.hidden_dim)
 
         if target_7d is not None:
@@ -151,4 +183,6 @@ class DualStreamLigandGenerator(nn.Module):
 
             sampled_7d = sampled_real_flat.view(batch_size, seq_len, 7)
             
-        return logits_vocab, loss_geo, sampled_7d, attn_weights
+        link_logits = {"parent": logits_parent, "attach_self": logits_attach_self,
+                       "attach_parent": logits_attach_parent}
+        return logits_vocab, loss_geo, sampled_7d, attn_weights, link_logits
