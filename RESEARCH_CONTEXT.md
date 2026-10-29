@@ -3493,3 +3493,52 @@ de phan tu **ton tai**. Moi mo hinh dung bieu dien nay deu phai vuot rao do truo
 **Khuyen nghi cua tro ly: (b) truoc.** No lam cho "phan tu co hop le khong" **doc lap** voi do chinh xac
 pose, nen moi do luong ve sau (QED/SA/Vina) tro nen co nghia; va no re hon (a) ve rui ro. (a) van can,
 nhung nen do **sau** khi (b) tach bach duoc hai nguon loi.
+
+---
+
+## 44. Dac tinh do thi fragment (server, 2026-10-30, HEAD `7ffcb79`): Q1 DAT, **Q2 BAC**, Q3 do duoc
+Log: `logs/m25_frag_graph.log`. 1.894 phan tu train, 0 loi doc.
+
+### 44.1. Q1: do thi fragment LUON la cay — 1.894/1.894 = 1,0000
+Khop ly thuyet (`step0` chi cat lien ket **khong trong vong**). Da **do**, khong gia dinh.
+
+### 44.2. Q2: **BAC** — thu tu canonical cua Frag2Seq KHONG dam bao cha xuat hien truoc
+```
+phan tu ma MOI fragment t>=1 co hang xom o vi tri nho hon:  326/1.894 = 0,1721
+so VI TRI vi pham:                                        3.186/9.176 = 0,3472
+```
+⇒ **Hon mot phan ba so vi tri khong co cha o truoc.** Thiet ke "du doan mot chi so cha trong cac vi tri
+da sinh" **khong chay duoc** voi thu tu hien tai.
+**Vi sao Frag2Seq khong gap van de nay:** ho khoi phuc lien ket **bang hinh hoc**, khong bang thu tu chuoi
+(Muc 43.7), nen ho chi can thu tu **canonical** (tat dinh, bat bien dong cau) — khong can
+cha-truoc-con. Ta can **ca hai**. Day khong phai loi cua S3/N1 (Muc 37.6): thu tu Frag2Seq van dung cho
+muc dich cua no, nhung **khong du** cho kenh lien ket.
+
+### 44.3. Ban sua: thu tu DFS CANONICAL tren cay fragment
+Goc = fragment chua nguyen tu co **canonical rank 0**; duyet con theo thu tu **rank nho nhat** cua chung.
+Tat dinh va bat bien dong cau (vi `CanonicalRankAtoms` la vay), **va** cha luon xuat hien truoc **theo cau
+truc**, khong phai theo xac suat.
+**Nguon:** Jin, Barzilay & Jaakkola (2018), *Junction Tree Variational Autoencoder for Molecular Graph
+Generation*, ICML — sinh cay con theo thu tu **DFS**, moi buoc du doan nut cha va diem gan. Day la cach
+chuan cua cac mo hinh sinh phan tu theo cay/fragment.
+
+### 44.4. Q3: kich co cac head (do duoc, R16 muc 2)
+```
+so dummy / fragment:  1:4.440  2:6.030  3:551  4:46  5:3     max=5  p99=3  mean=1,66
+so fragment / phan tu: max=20  p99=19  mean=5,84
+bac trong do thi fragment: max=5  p99=3
+```
+⇒ head **diem gan**: 5 lop. head **cha**: con tro tren toi da 19 vi tri truoc do.
+Luu y `mean=5,84` khop `5,92` do o Muc 43 (hai cach dem khac nhau, cung co).
+
+### 44.5. Chon kien truc: BA HEAD RIENG, khong xen token
+Hai cach them kenh lien ket:
+* **(i) Xen vao chuoi token** (fragment, offset-cha, dummy-self, dummy-cha): khong can head moi, nhung
+  chuoi dai gap ~4 lan va **pha vo anh xa 1-1 giua vi tri va 7D** ⇒ phai sua mask cua `Geo_Loss`, tuc dong
+  vao duong hinh hoc **vua moi duoc xac nhan sach** (Muc 42). Mo hinh con phai hoc ngu phap va co the sinh
+  chuoi sai ngu phap.
+* **(ii) Ba head rieng** `parent` (con tro), `attach_self` (5 lop), `attach_parent` (5 lop): chuoi **giu
+  nguyen do dai**, 7D van 1-1 voi vi tri ⇒ **khong dong gi vao duong hinh hoc**. Luc sinh, che (mask) cac
+  lua chon khong hop le ⇒ **khong the sinh ra cau truc sai**.
+**Chon (ii).** Ly do quyet dinh: khong lam nhieu duong hinh hoc da xac nhan, va bao dam tinh hop le bang
+che thay vi bang hoc.
