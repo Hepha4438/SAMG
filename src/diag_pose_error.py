@@ -112,7 +112,7 @@ def main():
         samples = []
         with torch.no_grad():
             for _ in range(args.K):
-                _, _, s7, _ = model.generator(inp_ids, h_target, [], target_mask=target_mask,
+                _, _, s7, _, _lk = model.generator(inp_ids, h_target, [], target_mask=target_mask,
                                                target_ids=tgt_ids)
                 samples.append(s7[0].double().cpu().numpy())
         S = np.stack(samples)                       # [K, L, 7]
