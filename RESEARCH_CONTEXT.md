@@ -3303,3 +3303,59 @@ Se xu ly rieng o buoc danh gia; `openbabel` **da co** trong env `samg`.
 **mo coi** (khong ghep duoc trong 1,5 A), va ty le phan tu **lien thong** (1 manh). Ty le lien thong thap
 la dau hieu pose sai lam cac diem gan khong gap nhau — day la thong tin ve **chat luong pose**, khong
 phai loi lap rap.
+
+---
+
+## 41. A2b (server, 2026-10-29, HEAD `8226ad8`): duong lap rap DAT; T3 vo hieu; do phu test 58%
+Log: `logs/m21_ceiling_test.log`, `logs/assembly_ceiling_test.json`. 255 complex test (sau `frame_stable`).
+
+### 41.1. T1/T2 DAT — bo lap rap cua du an tai tao DUNG phan tu goc
+```
+reference  255/255 = 1,0000   QED 0,6064  SA 2,9123  logP 1,9436  Lipinski 4,6941
+gt_exact   249/255 = 0,9765   QED 0,6106  SA 2,8726  logP 1,9665  Lipinski 4,6908
+```
+T1 `0,9765 >= 0,90` **DAT**. T2 `|ΔQED| = 0,0042 <= 0,05` **DAT**.
+Chan doan lap rap: **dummy mo coi trung binh 0,00**; **phan tu lien thong 249/249 = 1,0000**.
+⇒ Phep ghep cap dummy theo khoang cach **khong truot lan nao**: moi diem gan deu tim dung doi tac,
+khong manh nao roi ra. Cung voi 39.2 (tai dung RMSD = 0,0000), chuoi
+`7D + local_coords → toa do → do thi phan tu` da duoc xac nhan **hai dau**.
+
+### 41.2. **T3 VO HIEU — loi dac ta cua tro ly, vi pham R5**
+Tren tap chung 144 complex, ca ba hang cho **so y het nhau toi bon chu so**:
+`QED 0,5603 · SA 2,7863 · logP 1,4523 · Lipinski 4,5694`.
+**Khong phai trung hop:** QED, SA, logP (Crippen), Lipinski deu la **mo ta 2D** — chung chi phu thuoc
+**do thi** phan tu (nguyen to, lien ket, bac, dien tich), **khong** phu thuoc toa do 3D. `gt_exact` va
+`gt_template` khac nhau **chi o conformer**, con do thi thi giong het (lap rap thanh cong, cung lien ket)
+⇒ bon chi so do **buoc phai** bang nhau.
+Theo **R5** ("neu moi thu DUNG thi dai luong nay bang bao nhieu, va no CO THE dat gia tri do khong?"):
+neu moi thu dung thi T3 = 0 — tieu chi **khong co kha nang phat hien bat cu dieu gi**. Day la lan sai
+tieu chi thu muoi cua tro ly, va dung loai loi R4/R6 da ghi: **do sai dai luong**.
+**Sua:** gia cua xap xi mot-conformer la dai luong **3D**, nen do bang **RMSD tuyet doi** giua hai ban
+(cung thu tu nguyen tu — cung duong dung; cung frame the gioi). Khong can chinh Kabsch: phan tu phai nam
+**dung cho** trong hoc, nen do lech tuyet doi moi co nghia. Chi so 2D chi doi khi **do thi** doi — tuc
+khi lap rap that bai — nen chung van huu ich o T1/T2, khong huu ich o T3.
+**He qua rong hon:** moi so QED/SA/logP/Lipinski cua mo hinh ve sau cung **mu voi chat luong pose**.
+Chung chi do "mo hinh chon dung fragment nao" chu **khong** do "dat dung cho khong". Chi **Vina** (va cac
+phep kiem hinh hoc kieu PoseBusters) moi doc duoc phan pose. Phai ghi ro dieu nay khi bao cao ket qua.
+
+### 41.3. Sau loi khop tuong ung o fragment TICH DIEN — da sua
+`gt_exact` truot 6/255, tat ca cung mot kieu: `khong khop duoc thu tu nguyen tu giua SMILES va template`
+o `*C(=O)[O-]`, `*[S+](*)C`, `*N1CCC2(CC1)Cc1ccccc1[C@H]2[NH3+]`, `*N1CCC2(CC1)Oc1ccccc1[C@H]2[NH3+]`.
+**Nguyen nhan:** `GetSubstructMatch` mac dinh doi khop ca **dien tich hinh thuc**; do thi do dung tu
+khoang cach co moi nguyen tu **trung hoa**, nen fragment tich dien khong bao gio khop.
+**Sua:** dung do thi **TRAN** cho **ca hai ve** (chi so hieu nguyen tu + lien ket don, bo dien tich, thom
+tinh, lap the), `FastFindRings` thay vi sanitize (hoa tri co the bat thuong khi bo dien tich).
+Nhap nhang do doi xung (hai oxy cua carboxylate) la **vo hai**: hai khop la anh cua nhau qua tu dang cau
+cua do thi tran, va hai vi tri oxy gan trung nhau ve hinh hoc.
+
+### 41.4. Do phu tu dien tren test: 58,04% — mot GIOI HAN THAT, khong phai loi
+`148/255 = 0,5804` phan tu test co **moi** fragment trong tu dien train. 107 phan tu con lai chua
+fragment chi xuat hien o test (nhieu nhat: `*c1nc(Cl)nc2c1ncn2*` x20 — khung purine clo hoa).
+**Doc cho dung:** mo hinh **khong bao gio sinh ra** cac fragment do (do phu TU VUNG = 100%, Muc 38.3),
+nen day **khong** phai loi lap rap, cung khong phai thieu sot cua tu dien. Day la phat bieu ve **bai toan**:
+tu vung fragment hoc tu train **khong voi toi 42% phan tu test**. Tran tren cua mo hinh vi the chi ton
+tai tren **58% test**; phan con lai mo hinh **khong the** tai tao, du pose co hoan hao.
+So sanh: valid 73,30% (Muc 38.2) vs test 58,04% — test xa train hon valid, **nhat quan** voi viec Apo2Mol
+chia split **theo thoi gian** (PDF muc 5: chronological split, test la cac cau truc moi nhat).
+Day la con so **phai bao cao kem** moi ket qua sinh mau, va la lap luan manh cho viec xem lai cach cat
+fragment (fragment hiem/lon → it tai su dung).
