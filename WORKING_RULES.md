@@ -93,8 +93,12 @@ sai số bằng sàn nhiễu. Ví dụ đã làm: sau khi tách `build_h_target`
 
 ## E. Mẫu lệnh chuẩn (server)
 
+⚠️ **`~/SAMG` KHÔNG tồn tại** (xác minh 2026-10-29). Đường dẫn thật là
+`/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG`. Luôn đặt biến ở đầu phiên:
+
 ```bash
-cd ~/SAMG && git pull && git log --oneline -3 && conda activate samg \
+export SAMG=/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG
+cd $SAMG && git pull && git log --oneline -3 && conda activate samg \
   && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 \
      python -u src/<script>.py 2>&1 | tee logs/<ten>.log
 ```
