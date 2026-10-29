@@ -248,11 +248,17 @@ def main():
     print(f"SINH MAU -- split={args.split}  hoc={n_pocket}  mau={n_gen}  "
           f"({args.num_samples}/hoc, temperature={args.temperature})")
     print("=" * 92)
-    print(f"\n  Validity (lap rap thanh phan tu hop le): {len(ok)}/{n_gen} = {len(ok) / max(n_gen, 1):.4f}")
+    # Muc 43: "sanitize duoc" KHONG du de goi la phan tu -- mot dam fragment roi rac van sanitize
+    # duoc. Validity that phai doi LIEN THONG (1 manh).
+    n_conn = sum(1 for d_ in diags if d_["n_manh"] == 1)
+    print(f"\n  Validity (chi sanitize duoc):        {len(ok)}/{n_gen} = {len(ok) / max(n_gen, 1):.4f}")
+    print(f"  Validity (sanitize VA lien thong):   {n_conn}/{n_gen} = {n_conn / max(n_gen, 1):.4f}"
+          f"   <- con so that")
     for k, v in Counter(errs).most_common(5):
         print(f"      loi: {k[:74]:76} x{v}")
     out = {"split": args.split, "head": head, "ckpt": os.path.basename(ckpt), "n_pocket": n_pocket,
-           "n_gen": n_gen, "validity": len(ok) / max(n_gen, 1), "temperature": args.temperature}
+           "n_gen": n_gen, "validity_sanitize": len(ok) / max(n_gen, 1),
+           "validity_connected": n_conn / max(n_gen, 1), "temperature": args.temperature}
     if ok:
         print(f"\n      {'chi so':10}{'mean':>10}{'median':>10}")
         for k in ["QED", "SA", "logP", "Lipinski"]:
