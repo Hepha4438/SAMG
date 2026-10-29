@@ -29,7 +29,7 @@ def centroid_key(it):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--old-dir", required=True, help="dataset/processed_backup_prechannel_*")
-    ap.add_argument("--n", type=int, default=60)
+    ap.add_argument("--n", type=int, default=0, help="0 = het")
     args = ap.parse_args()
 
     try:
@@ -40,9 +40,12 @@ def main():
     print(f"git rev-parse HEAD: {head}\ndevice: khong dung  hostname: {socket.gethostname()}", flush=True)
 
     import step6_trainer as st
-    news = sorted(glob.glob(os.path.join(st.PROCESSED_DIR, "*_sequence_7d.pkl")))[: args.n]
+    news = sorted(glob.glob(os.path.join(st.PROCESSED_DIR, "*_sequence_7d.pkl")))
+    if args.n:
+        news = news[: args.n]
+    print(f"[*] quet {len(news)} file", flush=True)
 
-    n_file, n_frag, verdict = 0, 0, Counter()
+    n_file, n_frag, verdict, diff_files = 0, 0, Counter(), set()
     dq_max, dlocal_max, dcent_max = 0.0, 0.0, 0.0
     sign_flip, examples = 0, []
     for npath in news:
@@ -85,6 +88,8 @@ def main():
                 if len(examples) < 3:
                     examples.append((os.path.basename(npath), itn["smiles"],
                                      np.round(b[3:], 4).tolist(), np.round(a[3:], 4).tolist()))
+            if dq > 1e-6:
+                diff_files.add(os.path.basename(npath))
             dq_max = max(dq_max, dq)
             lo, ln = np.asarray(ito["local_coords"], np.float64), np.asarray(itn["local_coords"], np.float64)
             if lo.shape == ln.shape:
@@ -95,6 +100,9 @@ def main():
                 verdict["atomic_nums KHAC"] += 1
 
     print(f"\n[*] so sanh {n_file} file, {n_frag} fragment ghep duoc")
+    print(f"    so FILE co fragment lech quaternion: {len(diff_files)}")
+    for fn in sorted(diff_files)[:5]:
+        print(f"        {fn}")
     print(f"    max|delta d/theta/phi|   = {dcent_max:.3e}")
     print(f"    max|delta quaternion|    = {dq_max:.3e}")
     print(f"    max|delta local_coords|  = {dlocal_max:.3e}")
@@ -104,6 +112,34 @@ def main():
         print(f"        {k:44} x{v}")
     for fn, smi, qo, qn in examples:
         print(f"\n    vi du {fn}  {smi[:40]}\n        cu : {qo}\n        moi: {qn}")
+    # --- tach nguyen nhan: tinh TRUNG BINH 7D truc tiep tu pkl (khong qua Dataset/compute_scaler) ---
+    print("\n" + "=" * 86)
+    print("TINH LAI TRUNG BINH 7D TRUC TIEP TU PKL (train, frame_stable) -- bo qua Dataset/compute_scaler")
+    print("=" * 86)
+    with open(st.SPLIT_FILE, "rb") as f:
+        splits = pickle.load(f)
+    for tag, root in (("CU ", args.old_dir), ("MOI", st.PROCESSED_DIR)):
+        acc, n = [], 0
+        for e in splits.get("train", []):
+            path = os.path.join(root, e[2].split("/")[0] + "_sequence_7d.pkl")
+            if not os.path.exists(path):
+                continue
+            with open(path, "rb") as f:
+                d = pickle.load(f)
+            if not d.get("frame_stable", False):
+                continue
+            if any(not it.get("frag_frame_stable", True) for it in d["sequence"]):
+                continue
+            n += 1
+            acc.extend(it["spatial_tokens"] for it in d["sequence"])
+        A = np.asarray(acc, dtype=np.float64)
+        print(f"    {tag}: {n} complex, {A.shape[0]} token")
+        print(f"         mean = {np.round(A.mean(0), 6).tolist()}")
+        print(f"         std  = {np.round(A.std(0, ddof=1), 6).tolist()}")
+    print("\n    DOC: hai dong mean GIONG nhau => noi dung pkl khong doi, chenh lech o scaler den tu")
+    print("         DUONG Dataset/compute_scaler (vi du `float32`, hoac loc khac nhau).")
+    print("         KHAC nhau => noi dung pkl that su doi o mot phan file chua quet toi.")
+
     print("\n    DOC: 'quaternion DOI DAU' troi  => double cover q ~ -q (Muc D): cung MOT phep quay,")
     print("         nhan khong doi ve y nghia, nhung scaler/mo hinh thi doi. Phai chuan hoa dau.")
     print("         'quaternion KHAC' troi      => frame fragment that su doi => S5 da cham vao hinh hoc.")
