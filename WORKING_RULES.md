@@ -1,6 +1,6 @@
 # SAMG — Nguyên tắc làm việc (WORKING_RULES)
 
-> 16 quy tắc này (R1–R16, thêm R10b) rút ra từ **9 lần đặt tiêu chí/đặc tả đo sai** trong dự án, ghi ở
+> 17 quy tắc này (R1–R16, thêm R10b và R15b) rút ra từ **9 lần đặt tiêu chí/đặc tả đo sai** trong dự án, ghi ở
 > `RESEARCH_CONTEXT.md` các mục 20.11, 23.6, 26.5, 29.8, 31.4, 32.4, 33.5.
 > Vi phạm chúng đã làm mất nhiều ngày và **đình chỉ oan** hai kết luận đúng (Mục 25, M7).
 > Đọc hết trước khi viết tiêu chí đầu tiên.
@@ -55,6 +55,13 @@ Trả lời được câu thứ hai không cho phép tuyên bố câu thứ nh�
 **R10b — Hai estimator khác nhau không so trực tiếp.** "Xáo trộn lúc suy luận" đo *hàm đã học dùng
 X bao nhiêu*; "huấn luyện có X vs không X" đo *có X thì được thêm bao nhiêu*. Cái sau lớn hơn một
 cách hệ thống kể cả khi không có gì bị làm mất (Mục 33.5).
+
+**R15b — Phép kiểm không-đổi phải xác minh TIỀN ĐỀ của nó.** Trước khi tin kết quả so sánh, phải chắc
+sản phẩm **thật sự đã được tạo lại**: kiểm mtime, hoặc so với giá trị tính trực tiếp từ dữ liệu, chứ không
+so với một bản sao của chính file cũ. Ví dụ thật (Mục 45.4): `compute_scaler.py` sập vì `KeyError`, file
+scaler không được ghi, nên K1 so file cũ với bản sao của chính nó và **đạt một cách vô nghĩa**; hệ quả là
+scaler đã lệch dữ liệu qua nhiều lần chạy lại mà không ai biết.
+Hệ quả thường trực: **mỗi lần chạy lại `step0` phải chạy lại `compute_scaler` và kiểm scaler ↔ dữ liệu.**
 
 **R16 — Mọi tiêu chí, định nghĩa, ngưỡng và quyết định phải có cơ sở học thuật** (người dùng quy định
 2026-10-27). Chấp nhận theo thứ tự ưu tiên:
