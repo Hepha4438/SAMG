@@ -36,19 +36,32 @@ class AssemblyError(Exception):
     pass
 
 
-def _distance_graph(coords, atomic_nums):
-    """RWMol chi co lien ket DON suy tu khoang cach -- chi dung lam do thi do de khop tuong ung."""
+def _plain_graph(atomic_nums, bonds):
+    """Do thi TRAN: chi so hieu nguyen tu + lien ket DON. Khong dien tich hinh thuc, khong thom tinh,
+    khong lap the. Dung cho CA HAI ve cua phep khop tuong ung, nen cac thuoc tinh do bi bo qua het.
+    Can thiet: fragment tich dien (`*C(=O)[O-]`, `*[S+](*)C`, `[NH3+]`) truoc day khop THAT BAI vi
+    substructure match mac dinh doi khop ca dien tich hinh thuc (Muc 41.2)."""
     m = Chem.RWMol()
     for z in atomic_nums:
         m.AddAtom(Chem.Atom(int(z)))
+    for i, j in bonds:
+        if m.GetBondBetweenAtoms(int(i), int(j)) is None:
+            m.AddBond(int(i), int(j), Chem.BondType.SINGLE)
+    g = m.GetMol()
+    Chem.FastFindRings(g)      # dat thong tin vong ma khong sanitize (hoa tri co the bat thuong)
+    return g
+
+
+def _distance_bonds(coords, atomic_nums):
     n = len(atomic_nums)
+    out = []
     for i in range(n):
         for j in range(i + 1, n):
             ri = COVALENT_R.get(int(atomic_nums[i]), 0.77)
             rj = COVALENT_R.get(int(atomic_nums[j]), 0.77)
             if np.linalg.norm(coords[i] - coords[j]) < BOND_TOL * (ri + rj):
-                m.AddBond(i, j, Chem.BondType.SINGLE)
-    return m
+                out.append((i, j))
+    return out
 
 
 def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
@@ -62,12 +75,10 @@ def fragment_mol_with_coords(smiles, local_coords, atomic_nums):
     if ref.GetNumAtoms() != len(z):
         raise AssemblyError(f"{smiles!r}: SMILES co {ref.GetNumAtoms()} nguyen tu, template co {len(z)}")
 
-    probe = _distance_graph(coords, z).GetMol()
-    params = Chem.AdjustQueryParameters.NoAdjustments()
-    params.makeBondsGeneric = True       # do thi do chi co lien ket don -> bo qua bac khi khop
-    params.makeDummiesQueries = False
-    query = Chem.AdjustQueryProperties(ref, params)
-    match = probe.GetSubstructMatch(query)   # match[i] = chi so trong probe cua nguyen tu ref i
+    probe = _plain_graph(z, _distance_bonds(coords, z))
+    qgraph = _plain_graph([a.GetAtomicNum() for a in ref.GetAtoms()],
+                          [(b.GetBeginAtomIdx(), b.GetEndAtomIdx()) for b in ref.GetBonds()])
+    match = probe.GetSubstructMatch(qgraph, useChirality=False)   # match[i] = chi so probe cua ref i
     if not match:
         raise AssemblyError(f"{smiles!r}: khong khop duoc thu tu nguyen tu giua SMILES va template")
 
