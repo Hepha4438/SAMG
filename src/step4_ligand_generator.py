@@ -104,7 +104,13 @@ class DualStreamLigandGenerator(nn.Module):
         # (nhãn thật); sampling dùng token vừa được lấy mẫu từ logits_vocab của chính lượt
         # forward này (chưa có nhãn thật). tok_emb.detach() để không tạo đường gradient
         # thứ hai vào cùng bảng embedding (đã có đường chính qua self.token_embedding(input_ids)).
-        if target_7d is not None:
+        # Muc 42.2: dieu kien la `target_ids is not None`, KHONG phai `target_7d is not None`.
+        # Luc SINH MAU truoc day generator tu lay mau mot token rieng de lam tok_emb, trong khi token
+        # thuc su duoc giu lai la token lay mau o NGOAI vong -- hai token khac nhau ⇒ 7D duoc sinh
+        # voi dieu kien SAI token (pha vo dung muc dich cua P2c). Khi da biet chuoi token, truyen
+        # target_ids vao de 7D duoc sinh dung tren token do. Luc huan luyen khong doi gi:
+        # target_ids luon duoc truyen cung target_7d.
+        if target_ids is not None:
             tok_emb = self.token_embedding(target_ids)
         else:
             sampled_ids = torch.multinomial(
