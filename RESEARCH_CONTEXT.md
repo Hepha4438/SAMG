@@ -3359,3 +3359,41 @@ So sanh: valid 73,30% (Muc 38.2) vs test 58,04% — test xa train hon valid, **n
 chia split **theo thoi gian** (PDF muc 5: chronological split, test la cac cau truc moi nhat).
 Day la con so **phai bao cao kem** moi ket qua sinh mau, va la lap luan manh cho viec xem lai cach cat
 fragment (fragment hiem/lon → it tai su dung).
+
+---
+
+## 42. A2b' (server, 2026-10-29, HEAD `26860fb`): duong lap rap SACH HOAN TOAN
+Log: `logs/m22_ceiling_test2.log`.
+```
+reference   255/255 = 1,0000
+gt_exact    255/255 = 1,0000   QED/SA/logP/Lipinski TRUNG KHIT reference (lech 0,0000)
+gt_template 146/255 = 0,5725   (109 thieu template -- gioi han tu vung, Muc 41.4)
+lap rap: dummy mo coi 0,00  |  lien thong 255/255 = 1,0000
+```
+**T1 = 1,0000 DAT. T2 = 0,0000 DAT.** Ban sua do thi tran (41.3) xu ly tron ven ca 6 ca fragment tich dien.
+**T3 (moi, RMSD 3D tren 146 complex): median 0,1187 A · p90 0,6324 · max 1,0219.**
+⇒ Gia cua xap xi mot-conformer: **median 0,12 A**, duoi xa nguong 2 A ma nganh docking coi la "pose dung"
+(va duoi ca nguong 1 A chat hon o p90). Medoid (39.4) lam dung viec cua no.
+**Chuoi bieu dien → toa do → do thi phan tu gio da sach ca ba khau:** nghich dao (RMSD = 0,0000),
+lap rap (255/255, 0 dummy mo coi, 100% lien thong), template (median 0,12 A).
+Moi sai lech ve sau **chi** co the den tu du doan cua mo hinh.
+
+### 42.1. Hai moc de doc ket qua mo hinh (ghi cung truoc khi sinh mau)
+* **Tran tren** = `gt_template [tap chung]` tren 146 complex: QED 0,5583 · SA 2,8077 · logP 1,3972 ·
+  Lipinski 4,5685. Mo hinh dung **cung** template va **cung** duong lap rap, chi khac pose ⇒ **khong the
+  vuot**. Nhung luu y 41.2: bon chi so nay **2D**, nen chung do "chon dung fragment nao", khong do pose.
+* **San pose** = RMSD 0,12 A (median). Moi lech pose cua mo hinh phai doc **tren** nen nay.
+* **Gioi han bai toan**: tu vung khong voi toi 42% phan tu test (41.4) — phai bao cao kem moi bang ket qua.
+
+### 42.2. Loi o duong SINH MAU phat hien khi doc lai `step4` — da sua
+`step4_ligand_generator.py` re nhanh theo `if target_7d is not None` de quyet dinh lay `tok_emb` tu
+`target_ids` hay tu token **tu lay mau ben trong**. Luc sinh mau, `target_7d is None` ⇒ generator **tu lay
+mau mot token rieng** lam `tok_emb`, trong khi token thuc su duoc giu lai la token lay mau o **ngoai** vong
+(`step7` cu, dong ~455). **Hai token nay khac nhau** ⇒ 7D duoc sinh voi dieu kien **sai token**.
+Dieu do pha vo dung muc dich cua P2c ("Flow dang bi hoi 'dat cai nay o dau' ma khong duoc cho biet 'cai
+nay la gi'"): P2c noi `token_embedding(token dang sinh)` vao context cua geometric head, nhung luc sinh mau
+thi noi nham token khac.
+**Sua:** re nhanh theo `if target_ids is not None`. Luc huan luyen khong doi gi (`target_ids` luon duoc
+truyen cung `target_7d`). Luc sinh mau: lay mau **toan bo chuoi token truoc**, roi mot forward **cuoi** voi
+`target_ids` = chuoi do va `target_7d=None` ⇒ toan bo 7D duoc sinh dung tren token cua chinh vi tri do,
+va chi ton `L+1` forward thay vi `2L`.
