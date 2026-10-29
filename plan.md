@@ -1789,3 +1789,26 @@ python -u src/check_assembly_ceiling.py --split test 2>&1 | tee logs/m21_ceiling
 ```
 Tieu chi T1/T2/T3 giu nguyen (Muc 40.1). Doc them ba chan doan lap rap: so lien ket lien-fragment,
 so dummy mo coi, ty le phan tu lien thong.
+
+---
+
+# PLAN Rev 20 — sau A2b (2026-10-29)
+
+**T1/T2 DAT** (Muc 41.1): duong lap rap xac nhan hai dau. **T3 vo hieu** (41.2, loi dac ta R5) ⇒ thay
+bang RMSD 3D. **Sua loi khop fragment tich dien** (41.3). **Do phu test 58,04%** (41.4) la gioi han that.
+
+## A2b' (chay lai, ~15 phut) — sau hai ban sua
+```bash
+cd $SAMG && git pull && git log --oneline -1 && conda activate samg
+python -u src/check_assembly_ceiling.py --split test 2>&1 | tee logs/m22_ceiling_test2.log
+```
+**Doc:** `recon_success(gt_exact)` ky vong len **1,0000** (6 ca truot deu la fragment tich dien, da sua).
+Neu van < 1,0 thi doc ky loai loi con lai. **T3 moi:** RMSD 3D median/p90/max giua `gt_exact` va
+`gt_template` — day la gia that cua xap xi mot-conformer. Chua dat nguong; lay so nay lam **san** de doc
+ket qua cua mo hinh (mo hinh khong the tot hon no).
+
+## Ghi nho khi bao cao ket qua mo hinh (41.2)
+QED/SA/logP/Lipinski **mu voi chat luong pose** — chung chi do "chon dung fragment nao". Chi **Vina** va
+kiem hinh hoc moi doc duoc pose. Phai viet ro dieu nay trong moi bang ket qua.
+
+Ket qua ghi vao **Muc 42**.
