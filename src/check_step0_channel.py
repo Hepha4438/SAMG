@@ -3,7 +3,7 @@ check_step0_channel.py -- PLAN Rev 21, kiem khong-doi K5-K9 sau khi chay lai ste
 (thu tu DFS canonical + kenh lien ket). Khong GPU, khong model.
 
   K5 `parent[t] < t` o 100% vi tri t>=1, va `parent[0] == -1` o 100% phan tu  -> DFS dung
-  K6 scaler khop ban cu trong 1e-4 (nhan 7D KHONG doi, chi doi thu tu)         -> S5 khong lam doi nhan
+  K6 scaler TU NHAT QUAN voi du lieu: khop trung binh/std tinh TRUC TIEP tu pkl (1e-4, Muc 45.6)
   K7 `len(vocab)` khong doi (3.983)                                            -> tap fragment khong doi
   K8 tai dung tu `parent`/`attach_*` (KHONG dung hinh hoc lien-fragment) cho do thi TRUNG KHOP
      phan tu goc o >= 99% complex                                              -> TIEU CHI QUAN TRONG NHAT
@@ -38,7 +38,6 @@ OLD_SCALER = {"d": (5.161378, 2.478297), "theta": (1.531624, 0.664945), "phi": (
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--old-scaler", default=None)
     ap.add_argument("--k8-n", type=int, default=400, help="so complex kiem K8 (0 = het train+valid+test)")
     args = ap.parse_args()
 
@@ -98,24 +97,45 @@ def main():
         fails.append("K5")
 
     # ---------------------------------------------------------------- K6
-    print("\n" + "=" * 90 + "\nK6: scaler khop ban cu (sai so tuong doi 1e-4)\n" + "=" * 90)
-    new = torch.load(os.path.join(st.PROCESSED_DIR, "scaler_7d.pt"), map_location="cpu")
-    n_shift, n_scale = new["shift"].view(7).double(), new["scale"].view(7).double()
-    if args.old_scaler and os.path.exists(args.old_scaler):
-        old = torch.load(args.old_scaler, map_location="cpu")
-        o_shift, o_scale = old["shift"].view(7).double(), old["scale"].view(7).double()
-    else:
-        o_shift = torch.tensor([OLD_SCALER[n][0] for n in DIM_NAMES], dtype=torch.float64)
-        o_scale = torch.tensor([OLD_SCALER[n][1] for n in DIM_NAMES], dtype=torch.float64)
+    print("\n" + "=" * 90)
+    print("K6: scaler TU NHAT QUAN voi du lieu (Muc 45.6)")
+    print("=" * 90)
+    print("    So `scaler_7d.pt` voi trung binh/std tinh TRUC TIEP tu pkl (train, frame_stable, float64).")
+    print("    Moc cu ('khop bang A1') da bo: bang do khong khop du lieu (45.5), va so mot file voi ban")
+    print("    sao cua chinh no thi dat vo nghia (45.4, R15b).")
+    rows, n_cx = [], 0
+    for e in splits.get("train", []):
+        pth = pkl_by_id.get(e[2].split("/")[0])
+        if pth is None:
+            continue
+        try:
+            with open(pth, "rb") as f:
+                d = pickle.load(f)
+        except Exception:
+            continue
+        if not d.get("frame_stable", False):
+            continue
+        if any(not it.get("frag_frame_stable", True) for it in d["sequence"]):
+            continue
+        n_cx += 1
+        rows.extend(it["spatial_tokens"] for it in d["sequence"])
+    A = np.asarray(rows, dtype=np.float64)
+    sc = torch.load(os.path.join(st.PROCESSED_DIR, "scaler_7d.pt"), map_location="cpu")
+    f_shift = sc["shift"].view(7).double().numpy()
+    f_scale = sc["scale"].view(7).double().numpy()
+    t_shift, t_scale = A.mean(0), A.std(0, ddof=1)
+    print(f"    {n_cx} complex, {A.shape[0]} token")
+    print(f"    {'chieu':8}{'shift file':>13}{'shift that':>13}{'rel':>10}"
+          f"{'scale file':>13}{'scale that':>13}{'rel':>10}")
     k6 = True
     for i, nm in enumerate(DIM_NAMES):
-        r = max(abs(n_shift[i] - o_shift[i]).item() / max(abs(o_shift[i]).item(), 1e-12),
-                abs(n_scale[i] - o_scale[i]).item() / max(abs(o_scale[i]).item(), 1e-12))
-        if r > REL_TOL:
-            k6 = False
-            print(f"    {nm}: LECH  shift {o_shift[i]:.6f}->{n_shift[i]:.6f}  "
-                  f"scale {o_scale[i]:.6f}->{n_scale[i]:.6f}  rel={r:.2e}")
-    print(f"    => K6 {'DAT' if k6 else 'KHONG DAT'}")
+        r1 = abs(f_shift[i] - t_shift[i]) / max(abs(t_shift[i]), 1e-12)
+        r2 = abs(f_scale[i] - t_scale[i]) / max(abs(t_scale[i]), 1e-12)
+        bad = (r1 > REL_TOL) or (r2 > REL_TOL)
+        k6 &= not bad
+        print(f"    {nm:8}{f_shift[i]:13.6f}{t_shift[i]:13.6f}{r1:10.2e}"
+              f"{f_scale[i]:13.6f}{t_scale[i]:13.6f}{r2:10.2e}" + ("  <-- LECH" if bad else ""))
+    print(f"    => K6 {'DAT' if k6 else 'KHONG DAT: scaler CU hoac compute_scaler da sap'}")
     if not k6:
         fails.append("K6")
 
@@ -207,8 +227,10 @@ def main():
     print("\n" + "=" * 90)
     print("TAT CA K5-K9 DAT => chay build_fragment_dict roi sang S6/S7 (head + loss)." if not fails
           else f"KHONG DAT: {', '.join(fails)}")
-    if "K6" in fails or "K9" in fails:
-        print("    K6/K9 hong => S5 DA LAM DOI NHAN. DUNG.")
+    if "K9" in fails:
+        print("    K9 hong => S5 DA LAM DOI NHAN. DUNG.")
+    if "K6" in fails:
+        print("    K6 hong => scaler khong khop du lieu: chay lai `compute_scaler.py` roi kiem lai (R15b).")
     print("=" * 90)
 
 
