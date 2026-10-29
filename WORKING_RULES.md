@@ -179,6 +179,13 @@ chỉ rõ mục cần đọc, file được sửa, không chạy script, bẫy �
 - Góc giữa hai phép quay ngẫu nhiên đều trong SO(3): mật độ `(1−cos t)/π` trên `[0, π]`;
   **mean = π/2 + 2/π ≈ 126,5°**, **median ≈ 132,3°**. Dùng làm mốc "không học được gì" cho mọi phép đo quay.
 
+**G5c. Sinh phân tử theo cây fragment**
+- Jin, Barzilay & Jaakkola (2018), *Junction Tree Variational Autoencoder for Molecular Graph Generation*,
+  ICML — sinh cây con theo thứ tự **DFS**, mỗi bước dự đoán nút cha và điểm gắn. Cơ sở cho thứ tự DFS
+  canonical ở SAMG (Mục 44.3): thứ tự canonical của Frag2Seq **không** đảm bảo cha xuất hiện trước
+  (đo được: 34,7% vị trí vi phạm, Mục 44.2) vì Frag2Seq khôi phục liên kết bằng hình học chứ không bằng
+  thứ tự chuỗi.
+
 **G6. Tái dựng phân tử 3D từ biểu diễn fragment + pose (không cần ETKDG)**
 - Frag2Seq mục 3.3.1 + phụ lục (chứng minh surjective): lưu từ điển {canonical SMILES fragment → atom types +
   toạ độ cục bộ trong frame fragment}; từ chuỗi `[d, θ, φ, quaternion]` tái dựng **duy nhất** phân tử 3D, sai khác
