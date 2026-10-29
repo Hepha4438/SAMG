@@ -29,7 +29,11 @@ TIEU CHI (ghi cung TRUOC khi chay, Muc 40.1):
   T1 `recon_success(gt_exact) >= 0,90` => duong lap rap dung duoc, di tiep sinh mau.
      `< 0,70`                          => LAP RAP la nut that; sua truoc, KHONG sinh mau.
   T2 `|mean QED(gt_exact) - mean QED(reference)| <= 0,05` => lap rap giu duoc hoa hoc.
-  T3 Bao cao `gt_template` so voi `gt_exact` = gia cua xap xi mot-conformer. Khong nguong.
+  T3 [SUA, Muc 41.1] QED/SA/logP/Lipinski la **mo ta 2D**: chi phu thuoc DO THI phan tu, khong phu
+     thuoc toa do 3D. gt_exact va gt_template cho CUNG do thi (lap rap thanh cong, cung lien ket)
+     ⇒ bon chi so do **buoc phai** bang nhau; tieu chi cu khong co kha nang phat hien gi (vi pham R5).
+     Thay bang **RMSD 3D tuyet doi** giua hai ban (cung thu tu nguyen tu, cung frame the gioi) --
+     day moi la gia that cua xap xi mot-conformer, va la cai anh huong toi Vina.
 """
 import os
 import sys
@@ -163,6 +167,7 @@ def main():
     errs = {"gt_exact": [], "gt_template": []}
     diags = {"gt_exact": [], "gt_template": []}
     covered = set()          # complex ma MOI fragment deu co trong tu dien train
+    rmsd_tmpl = []           # T3: RMSD 3D gt_exact vs gt_template
     n_attempt = 0
     for e in splits.get(args.split, []):
         if args.n and n_attempt >= args.n:
@@ -187,9 +192,11 @@ def main():
         except Exception:
             rows["reference"].append(None)
 
+        mols = {}
         for key, fd in (("gt_exact", None), ("gt_template", frag_dict)):
             try:
                 mol, diag = build_molecule(d, fd)
+                mols[key] = mol
                 rows[key].append(chem_metrics(mol, sa_fn))
                 diags[key].append(diag)
             except KeyError as exc:
@@ -198,6 +205,14 @@ def main():
             except Exception as exc:
                 rows[key].append(None)
                 errs[key].append(f"{type(exc).__name__}: {exc}")
+        # T3 (Muc 41.1): RMSD 3D TUYET DOI giua hai ban -- cung thu tu nguyen tu (cung duong dung),
+        # cung frame the gioi. KHONG can chinh Kabsch: phan tu phai nam DUNG CHO trong hoc, nen do
+        # lech tuyet doi moi la dai luong co nghia.
+        if "gt_exact" in mols and "gt_template" in mols:
+            A, B = mols["gt_exact"], mols["gt_template"]
+            if A.GetNumAtoms() == B.GetNumAtoms():
+                PA, PB = A.GetConformer().GetPositions(), B.GetConformer().GetPositions()
+                rmsd_tmpl.append(float(np.sqrt(((PA - PB) ** 2).sum(axis=1).mean())))
 
         if n_attempt % 25 == 0:
             print(f"  ... {n_attempt} complex", flush=True)
@@ -252,15 +267,22 @@ def main():
         dq = abs(s_ex["QED_mean"] - s_ref["QED_mean"])
         print(f"    T2 |QED(gt_exact) - QED(reference)| = {dq:.4f}  (nguong {QED_TOL})"
               f"  => {'DAT' if dq <= QED_TOL else 'KHONG DAT: lap rap lam doi hoa hoc'}")
-    if c_tm.get("n") and c_ex.get("n"):
-        print(f"    T3 gia cua xap xi mot-conformer, TREN TAP CHUNG ({len(common)} complex):")
-        for k in ["QED", "SA", "logP", "Lipinski"]:
-            print(f"       {k:9} gt_exact {c_ex[k + '_mean']:8.4f} -> gt_template {c_tm[k + '_mean']:8.4f}"
-                  f"   (lech {c_tm[k + '_mean'] - c_ex[k + '_mean']:+.4f})")
-        print(f"       `gt_template [tap chung]` la TRAN TREN cua mo hinh tren phan test ma tu vung voi toi.")
+    print(f"    T3 gia cua xap xi mot-conformer = RMSD 3D tuyet doi (gt_exact vs gt_template)")
+    if rmsd_tmpl:
+        v = np.array(rmsd_tmpl)
+        print(f"       tren {v.size} complex: median={np.median(v):.4f} A  p90={np.percentile(v, 90):.4f}  "
+              f"max={v.max():.4f}")
+        print(f"       (QED/SA/logP/Lipinski la mo ta 2D nen BUOC PHAI bang nhau -- xem Muc 41.1)")
+        out_rmsd = {"median": float(np.median(v)), "p90": float(np.percentile(v, 90)),
+                    "max": float(v.max()), "n": int(v.size)}
+    else:
+        print("       khong do duoc (khong complex nao thanh ca hai ban)")
+        out_rmsd = {}
+    print(f"       `gt_template [tap chung]` la TRAN TREN cua mo hinh tren phan test ma tu vung voi toi.")
 
     out = {"split": args.split, "n_attempt": n_attempt, "head": head,
            "coverage": cov, "n_covered": len(covered), "n_common": len(common),
+           "rmsd_template_vs_exact": out_rmsd,
            "toan_bo": {"reference": s_ref, "gt_exact": s_ex, "gt_template": s_tm},
            "tap_chung": {"reference": c_ref, "gt_exact": c_ex, "gt_template": c_tm}}
     dst = os.path.join(SAMG_ROOT, "logs", f"assembly_ceiling_{args.split}.json")
