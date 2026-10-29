@@ -170,6 +170,15 @@ chỉ rõ mục cần đọc, file được sửa, không chạy script, bẫy �
   `--num_samples 5` mỗi hốc (`sample_split.py:266`). Tiện ích dùng lại: `utils/evaluation/scoring_func.py`,
   `docking_vina.py`, `similarity.py`.
 
+**G5b. Biểu diễn phép quay cho mạng nơ-ron**
+- Zhou, Barnes, Lu, Yang & Li (2019), *On the Continuity of Rotation Representations in Neural Networks*,
+  CVPR — arXiv:1812.07035: mọi biểu diễn quay trong không gian **≤ 4 chiều** (quaternion, Euler, trục-góc)
+  là **không liên tục** xét như hàm từ SO(3), nên mạng khó hồi quy; biểu diễn **6D** (hai cột ma trận quay
+  + Gram-Schmidt) thì liên tục. Chứng cứ trong SAMG: Mục 43.3 — đầu ra quay của mô hình **trùng khớp phân
+  phối quay ngẫu nhiên đều** (mean 125,7° vs 126,5°; median 131,4° vs 132,3°).
+- Góc giữa hai phép quay ngẫu nhiên đều trong SO(3): mật độ `(1−cos t)/π` trên `[0, π]`;
+  **mean = π/2 + 2/π ≈ 126,5°**, **median ≈ 132,3°**. Dùng làm mốc "không học được gì" cho mọi phép đo quay.
+
 **G6. Tái dựng phân tử 3D từ biểu diễn fragment + pose (không cần ETKDG)**
 - Frag2Seq mục 3.3.1 + phụ lục (chứng minh surjective): lưu từ điển {canonical SMILES fragment → atom types +
   toạ độ cục bộ trong frame fragment}; từ chuỗi `[d, θ, φ, quaternion]` tái dựng **duy nhất** phân tử 3D, sai khác
