@@ -35,14 +35,27 @@ import socket
 import argparse
 import subprocess
 
+import types
 import numpy as np
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SAMG_ROOT = os.path.dirname(CURRENT_DIR)
 sys.path.insert(0, CURRENT_DIR)
-# `utils` cua SAMG (src/utils) va cua Apo2Mol deu la namespace package (khong co __init__.py) nen
-# hai cay hoa vao nhau: utils.data (SAMG) + utils.reconstruct / utils.evaluation.* (Apo2Mol).
-sys.path.append(os.path.join(SAMG_ROOT, "Apo2Mol"))
+
+# SAMG can `utils.data` (src/utils), Apo2Mol can `utils.reconstruct` + `utils.evaluation.*`
+# (Apo2Mol/utils). Ca hai thu muc deu KHONG co __init__.py. Chi them Apo2Mol vao sys.path thi
+# KHONG du -- da thu, bao `No module named 'utils.reconstruct'`: namespace package `utils` duoc
+# phan giai tu mot muc sys.path va khong gop them. Nen dung goi `utils` TUONG MINH voi __path__
+# tro toi CA HAI cay, dat TRUOC moi import khac de khong bi cache ban nao chen truoc.
+_UTILS_PATHS = [os.path.join(SAMG_ROOT, "src", "utils"), os.path.join(SAMG_ROOT, "Apo2Mol", "utils")]
+if "utils" not in sys.modules:
+    _m = types.ModuleType("utils")
+    _m.__path__ = _UTILS_PATHS
+    sys.modules["utils"] = _m
+else:
+    for _p in _UTILS_PATHS:
+        if _p not in list(getattr(sys.modules["utils"], "__path__", [])):
+            sys.modules["utils"].__path__.append(_p)
 
 RECON_OK_HI, RECON_OK_LO = 0.90, 0.70
 QED_TOL = 0.05
@@ -125,7 +138,7 @@ def main():
     import step6_trainer as st
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
-    from utils.reconstruct import reconstruct_from_generated, MolReconsError
+    from utils.reconstruct import reconstruct_from_generated
 
     with open(os.path.join(st.PROCESSED_DIR, "fragment_dict.pkl"), "rb") as f:
         frag_dict = pickle.load(f)
@@ -172,7 +185,7 @@ def main():
             try:
                 m = reconstruct_from_generated(xyz.tolist(), z.tolist())
                 bucket.append(chem_metrics(m) if m is not None else None)
-            except (MolReconsError, Exception):
+            except Exception:
                 bucket.append(None)
 
         if n_attempt % 25 == 0:
