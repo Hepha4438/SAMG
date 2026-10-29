@@ -1,92 +1,74 @@
 """
-check_assembly_ceiling.py -- PLAN Rev 20 A2b (buoc chan truoc khi sinh mau); RESEARCH_CONTEXT 39, 40.
+check_assembly_ceiling.py -- PLAN Rev 20 A2b; RESEARCH_CONTEXT 39, 40.1.
 
-CAU HOI: truoc khi do chat luong phan tu do MO HINH sinh ra, duong LAP RAP mat bao nhieu?
-Ba hang, deu KHONG dung mo hinh, do tren cung tap complex:
+CAU HOI: truoc khi do chat luong phan tu do MO HINH sinh ra, duong LAP RAP tu no mat bao nhieu?
+Ba hang, deu KHONG dung mo hinh, tren cung tap:
 
-  1. `reference`    -- doc thang SDF goc              -> moc that
-  2. `gt_exact`     -- NHAN THAT + `local_coords` theo TUNG LAN XUAT HIEN -> reconstruct
-                       => do RIENG buoc lap rap (suy lien ket tu hinh hoc). Toa do CHINH XAC
-                          (Muc 39.2: tai dung RMSD = 0,0000), nen moi mat mat la cua lap rap.
-  3. `gt_template`  -- NHAN THAT + template MEDOID tu `fragment_dict.pkl` -> reconstruct
-                       => them chi phi cua xap xi mot-conformer (Muc 39.4). Day la tran tren
-                          THAT SU cua mo hinh: khong mo hinh nao vuot qua duoc hang nay.
+  1. `reference`    -- doc thang SDF goc                                   -> moc that
+  2. `gt_exact`     -- nhan that + `local_coords` theo TUNG LAN XUAT HIEN  -> do RIENG buoc lap rap
+                       (toa do chinh xac: Muc 39.2 tai dung RMSD = 0,0000)
+  3. `gt_template`  -- nhan that + template MEDOID cua fragment_dict       -> + xap xi mot-conformer
+                       = **TRAN TREN that su cua mo hinh**: mo hinh dung CUNG template va CUNG duong
+                       lap rap, chi khac la pose do no du doan thay vi nhan that.
 
-Dung lai code cua Apo2Mol (R14): `utils/reconstruct.py:455 reconstruct_from_generated` (OpenBabel bond
-perception -- chuan cua nganh, `eval_split.py:122`), `utils/evaluation/scoring_func.py` (obey_lipinski,
-get_logp), `utils/evaluation/sascorer.py` (compute_sa_score). Chi so theo Apo2Mol (WORKING_RULES G5).
+Lap rap: `src/assemble.py` cua du an (khong dung Apo2Mol -- server khong co repo do; va ham cua ho
+vut bo lien ket roi suy lai bang OpenBabel, trong khi ta DA BIET lien ket trong tung fragment).
+Chi so hoa hoc: QED (rdkit), SA (sascorer chinh thuc di kem RDKit Contrib -- Ertl & Schuffenhauer
+2009, cung nguon ma Apo2Mol chep lai), logP (Crippen), Lipinski (5 quy tac, dinh nghia nhu
+Apo2Mol `utils/evaluation/scoring_func.py:obey_lipinski` -- WORKING_RULES G5).
 
-TIEU CHI (ghi cung TRUOC khi chay, plan Rev 20 A2b):
-  T1 `recon_success(gt_exact) >= 0,90`  => duong lap rap dung duoc, di tiep sinh mau.
-     `< 0,70`                           => LAP RAP la nut that; sua truoc, KHONG sinh mau.
-     giua                               => bao cao, quyet dinh.
-     (Tu toa do CHINH XAC, suy lien ket la bai toan da giai; moi that bai la mat mat thuan cua phuong
-      phap. 0,90 la quy uoc du an -- R16 muc 3 -- va so tho duoc bao cao du the nao.)
-  T2 `|mean QED(gt_exact) - mean QED(reference)| <= 0,05` => lap rap giu duoc hoa hoc. (quy uoc du an)
-  T3 Bao cao `gt_template` so voi `gt_exact`: chenh lech = gia cua xap xi mot-conformer. Khong nguong.
+TIEU CHI (ghi cung TRUOC khi chay, Muc 40.1):
+  T1 `recon_success(gt_exact) >= 0,90` => duong lap rap dung duoc, di tiep sinh mau.
+     `< 0,70`                          => LAP RAP la nut that; sua truoc, KHONG sinh mau.
+  T2 `|mean QED(gt_exact) - mean QED(reference)| <= 0,05` => lap rap giu duoc hoa hoc.
+  T3 Bao cao `gt_template` so voi `gt_exact` = gia cua xap xi mot-conformer. Khong nguong.
 """
 import os
 import sys
 import glob
-import math
 import json
+import math
 import pickle
 import socket
 import argparse
 import subprocess
+from collections import Counter
 
-import types
 import numpy as np
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SAMG_ROOT = os.path.dirname(CURRENT_DIR)
 sys.path.insert(0, CURRENT_DIR)
 
-# SAMG can `utils.data` (src/utils), Apo2Mol can `utils.reconstruct` + `utils.evaluation.*`
-# (Apo2Mol/utils). Ca hai thu muc deu KHONG co __init__.py. Chi them Apo2Mol vao sys.path thi
-# KHONG du -- da thu, bao `No module named 'utils.reconstruct'`: namespace package `utils` duoc
-# phan giai tu mot muc sys.path va khong gop them. Nen dung goi `utils` TUONG MINH voi __path__
-# tro toi CA HAI cay, dat TRUOC moi import khac de khong bi cache ban nao chen truoc.
-_APO = os.path.join(SAMG_ROOT, "Apo2Mol")
-_UTILS_PATHS = [os.path.join(SAMG_ROOT, "src", "utils"), os.path.join(_APO, "utils")]
-if "utils" not in sys.modules:
-    _m = types.ModuleType("utils")
-    _m.__path__ = _UTILS_PATHS
-    sys.modules["utils"] = _m
-else:
-    for _p in _UTILS_PATHS:
-        if _p not in list(getattr(sys.modules["utils"], "__path__", [])):
-            sys.modules["utils"].__path__.append(_p)
-
-
-def load_apo2mol(mod_name, rel_path):
-    """Nap mot module cua Apo2Mol THEO DUONG DAN TEP, khong qua PathFinder.
-    Dat `utils.__path__` tro toi ca hai cay VAN khong du (da thu: `utils.data` cua SAMG nap duoc
-    nhung `utils.reconstruct` cua Apo2Mol thi khong). Nap tuong minh thi loi that -- vi du thieu
-    `openbabel` -- hien ra dung ten, thay vi bi che bang ModuleNotFoundError('utils.reconstruct').
-    Dang ky truoc vao sys.modules de cac module sau (`scoring_func` import `sascorer`) dung lai."""
-    import importlib.util
-    path = os.path.join(_APO, rel_path)
-    if not os.path.exists(path):
-        raise SystemExit(f"[!] Khong thay {path} -- kiem tra repo Apo2Mol o {_APO}")
-    spec = importlib.util.spec_from_file_location(mod_name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
-    try:
-        spec.loader.exec_module(mod)
-    except ModuleNotFoundError as exc:
-        raise SystemExit(
-            f"[!] Nap {rel_path} that bai: thieu goi `{exc.name}`.\n"
-            f"    Cac tien ich danh gia cua Apo2Mol can them phu thuoc ngoai env `samg` hien tai.\n"
-            f"    reconstruct.py can `openbabel`; docking_vina.py can them `meeko`, `vina`, `AutoDockTools`.\n"
-            f"    Cai (conda-forge thuong de nhat cho openbabel):\n"
-            f"        conda install -y -c conda-forge openbabel\n"
-            f"        pip install meeko vina"
-        ) from exc
-    return mod
-
 RECON_OK_HI, RECON_OK_LO = 0.90, 0.70
 QED_TOL = 0.05
+
+
+def _sa_scorer():
+    """sascorer di kem RDKit (Contrib/SA_Score) -- ban chinh thuc cua Ertl & Schuffenhauer (2009)."""
+    from rdkit.Chem import RDConfig
+    p = os.path.join(RDConfig.RDContribDir, "SA_Score")
+    if p not in sys.path:
+        sys.path.append(p)
+    import sascorer
+    return sascorer.calculateScore
+
+
+def chem_metrics(mol, sa_fn):
+    """Lipinski theo dung 5 quy tac cua Apo2Mol `scoring_func.py:obey_lipinski` (MW<500, HBD<=5,
+    HBA<=10, logP trong [-2,5], so lien ket xoay duoc <=10)."""
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors, Crippen, Lipinski, rdMolDescriptors
+    from rdkit.Chem.QED import qed
+    logp = float(Crippen.MolLogP(mol))
+    lip = sum(int(b) for b in [
+        Descriptors.ExactMolWt(mol) < 500,
+        Lipinski.NumHDonors(mol) <= 5,
+        Lipinski.NumHAcceptors(mol) <= 10,
+        (-2 <= logp <= 5),
+        rdMolDescriptors.CalcNumRotatableBonds(mol) <= 10,
+    ])
+    return {"QED": float(qed(mol)), "SA": float(sa_fn(mol)), "logP": logp, "Lipinski": float(lip)}
 
 
 def spherical_to_vec(d, theta, phi):
@@ -95,59 +77,37 @@ def spherical_to_vec(d, theta, phi):
                      d * math.cos(theta)], dtype=np.float64)
 
 
-def place_fragments(pkl_data, frag_dict=None):
-    """Nghich dao 37-pre.3. frag_dict=None => dung local_coords theo tung lan xuat hien (gt_exact);
-    khac None => dung template medoid theo SMILES (gt_template). Tra (xyz, z) hoac None neu thieu template."""
+def build_molecule(pkl_data, frag_dict=None):
+    """Nghich dao 37-pre.3 roi lap rap. frag_dict=None => local_coords tung lan xuat hien (gt_exact);
+    khac None => template medoid (gt_template). Tra (mol, diag) hoac nem AssemblyError/KeyError."""
     from scipy.spatial.transform import Rotation as Rot
+    import assemble as asm
     R_m_to_w = np.asarray(pkl_data["pocket_R"], dtype=np.float64)
     t_m_to_w = np.asarray(pkl_data["pocket_t"], dtype=np.float64).reshape(3)
-    xyz_all, z_all = [], []
+    placed = []
     for item in pkl_data["sequence"]:
+        smi = item["smiles"]
         if frag_dict is None:
-            local = np.asarray(item["local_coords"], dtype=np.float64)
-            z = np.asarray(item["atomic_nums"]).reshape(-1)
+            local, z = np.asarray(item["local_coords"], np.float64), np.asarray(item["atomic_nums"])
         else:
-            e = frag_dict.get(item["smiles"])
+            e = frag_dict.get(smi)
             if e is None:
-                return None
-            local = np.asarray(e["local"], dtype=np.float64)
-            z = np.asarray(e["atomic_nums"]).reshape(-1)
+                raise KeyError(smi)
+            local, z = np.asarray(e["local"], np.float64), np.asarray(e["atomic_nums"])
         d, theta, phi, qw, qx, qy, qz = item["spatial_tokens"]
-        center_world = R_m_to_w @ spherical_to_vec(d, theta, phi) + t_m_to_w
+        center = R_m_to_w @ spherical_to_vec(d, theta, phi) + t_m_to_w
         R_g_to_w = R_m_to_w @ Rot.from_quat([qx, qy, qz, qw]).as_matrix()
-        world = (R_g_to_w @ (local - local.mean(axis=0)).T).T + center_world
-        keep = z != 0                                   # bo nguyen tu dummy
-        xyz_all.append(world[keep])
-        z_all.append(z[keep])
-    if not xyz_all:
-        return None
-    return np.concatenate(xyz_all, 0), np.concatenate(z_all, 0)
+        placed.append(asm.place(asm.fragment_mol_with_coords(smi, local, z.reshape(-1)), R_g_to_w, center))
+    return asm.assemble(placed)
 
 
-_SCORE = {}
-
-
-def init_scoring():
-    """Nap sascorer TRUOC roi dang ky duoi ten `utils.evaluation.sascorer`, de khi nap scoring_func
-    (no lam `from utils.evaluation.sascorer import compute_sa_score`) Python lay thang tu sys.modules."""
-    sasc = load_apo2mol("utils.evaluation.sascorer", "utils/evaluation/sascorer.py")
-    sf = load_apo2mol("apo2mol_scoring_func", "utils/evaluation/scoring_func.py")
-    _SCORE["sa"] = sasc.compute_sa_score
-    _SCORE["lipinski"] = sf.obey_lipinski
-    _SCORE["logp"] = sf.get_logp
-
-
-def chem_metrics(mol):
-    """QED, SA, logP, Lipinski -- dung ham cua Apo2Mol (R14)."""
-    from rdkit.Chem.QED import qed
-    return {"QED": float(qed(mol)), "SA": float(_SCORE["sa"](mol)),
-            "logP": float(_SCORE["logp"](mol)), "Lipinski": float(_SCORE["lipinski"](mol))}
-
-
-def summarize(name, rows, n_attempt):
+def summarize(name, rows, n_attempt, errs=None):
     ok = [r for r in rows if r is not None]
     rate = len(ok) / max(n_attempt, 1)
     print(f"\n  [{name}]  thanh cong {len(ok)}/{n_attempt} = {rate:.4f}")
+    if errs:
+        for k, v in Counter(errs).most_common(4):
+            print(f"      loi: {k[:72]:74} x{v}")
     if not ok:
         return {"recon_success": rate, "n": 0}
     out = {"recon_success": rate, "n": len(ok)}
@@ -177,9 +137,9 @@ def main():
     import step6_trainer as st
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
-    reconstruct_from_generated = load_apo2mol("apo2mol_reconstruct", "utils/reconstruct.py").reconstruct_from_generated
+    import assemble as asm
+    sa_fn = _sa_scorer()
 
-    init_scoring()
     with open(os.path.join(st.PROCESSED_DIR, "fragment_dict.pkl"), "rb") as f:
         frag_dict = pickle.load(f)
     print(f"[*] fragment_dict: {len(frag_dict)} SMILES")
@@ -189,8 +149,10 @@ def main():
     pkl_by_id = {os.path.basename(p)[: -len("_sequence_7d.pkl")]: p
                  for p in sorted(glob.glob(os.path.join(st.PROCESSED_DIR, "*_sequence_7d.pkl")))}
 
-    rows_ref, rows_exact, rows_tmpl = [], [], []
-    n_attempt, n_no_template = 0, 0
+    rows = {"reference": [], "gt_exact": [], "gt_template": []}
+    errs = {"gt_exact": [], "gt_template": []}
+    diags = {"gt_exact": [], "gt_template": []}
+    n_attempt = 0
     for e in splits.get(args.split, []):
         if args.n and n_attempt >= args.n:
             break
@@ -206,42 +168,46 @@ def main():
             continue
         n_attempt += 1
 
-        # 1. reference: doc thang SDF
         try:
             m = Chem.SDMolSupplier(os.path.join(st.DATASET_DIR, e[2]))[0]
-            rows_ref.append(chem_metrics(m) if m is not None else None)
+            rows["reference"].append(chem_metrics(m, sa_fn) if m is not None else None)
         except Exception:
-            rows_ref.append(None)
+            rows["reference"].append(None)
 
-        # 2. gt_exact  /  3. gt_template
-        for frag_dict_arg, bucket in ((None, rows_exact), (frag_dict, rows_tmpl)):
-            placed = place_fragments(d, frag_dict_arg)
-            if placed is None:
-                if frag_dict_arg is not None:
-                    n_no_template += 1
-                bucket.append(None)
-                continue
-            xyz, z = placed
+        for key, fd in (("gt_exact", None), ("gt_template", frag_dict)):
             try:
-                m = reconstruct_from_generated(xyz.tolist(), z.tolist())
-                bucket.append(chem_metrics(m) if m is not None else None)
-            except Exception:
-                bucket.append(None)
+                mol, diag = build_molecule(d, fd)
+                rows[key].append(chem_metrics(mol, sa_fn))
+                diags[key].append(diag)
+            except KeyError as exc:
+                rows[key].append(None)
+                errs[key].append(f"thieu template cho {exc}")
+            except Exception as exc:
+                rows[key].append(None)
+                errs[key].append(f"{type(exc).__name__}: {exc}")
 
         if n_attempt % 25 == 0:
             print(f"  ... {n_attempt} complex", flush=True)
 
-    print("\n" + "=" * 90)
+    print("\n" + "=" * 92)
     print(f"TRAN LAP RAP -- split={args.split}, {n_attempt} complex")
-    print("=" * 90)
-    s_ref = summarize("reference  (SDF goc)", rows_ref, n_attempt)
-    s_ex = summarize("gt_exact   (nhan that + local_coords tung lan)", rows_exact, n_attempt)
-    s_tm = summarize("gt_template(nhan that + template medoid)", rows_tmpl, n_attempt)
-    print(f"\n  [gt_template] so complex thieu template (fragment ngoai tu dien train): {n_no_template}")
+    print("=" * 92)
+    s_ref = summarize("reference   (SDF goc)", rows["reference"], n_attempt)
+    s_ex = summarize("gt_exact    (nhan that + local_coords tung lan)", rows["gt_exact"], n_attempt, errs["gt_exact"])
+    s_tm = summarize("gt_template (nhan that + template medoid)", rows["gt_template"], n_attempt, errs["gt_template"])
 
-    print("\n" + "=" * 90)
-    print("TIEU CHI (plan Rev 20 A2b)")
-    print("=" * 90)
+    for key in ("gt_exact", "gt_template"):
+        if diags[key]:
+            nm = np.array([x["n_manh"] for x in diags[key]])
+            no = np.array([x["n_dummy_mo_coi"] for x in diags[key]])
+            nb = np.array([x["n_bond_lien_frag"] for x in diags[key]])
+            print(f"\n  [{key}] lap rap: lien ket lien-fragment trung binh {nb.mean():.2f}  |  "
+                  f"dummy mo coi trung binh {no.mean():.2f}  |  phan tu lien thong (1 manh) "
+                  f"{(nm == 1).sum()}/{len(nm)} = {(nm == 1).mean():.4f}")
+
+    print("\n" + "=" * 92)
+    print("TIEU CHI (Muc 40.1)")
+    print("=" * 92)
     r = s_ex["recon_success"]
     print(f"    T1 recon_success(gt_exact) = {r:.4f}")
     if r >= RECON_OK_HI:
@@ -257,7 +223,7 @@ def main():
     if s_tm.get("n") and s_ex.get("n"):
         print(f"    T3 gia cua xap xi mot-conformer: recon_success {s_ex['recon_success']:.4f} -> "
               f"{s_tm['recon_success']:.4f}; QED {s_ex['QED_mean']:.4f} -> {s_tm['QED_mean']:.4f}")
-        print(f"       (gt_template la TRAN TREN that su cua mo hinh -- khong mo hinh nao vuot qua)")
+        print("       (gt_template la TRAN TREN cua mo hinh -- khong mo hinh nao vuot qua)")
 
     out = {"split": args.split, "n_attempt": n_attempt, "head": head,
            "reference": s_ref, "gt_exact": s_ex, "gt_template": s_tm}
