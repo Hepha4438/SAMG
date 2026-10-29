@@ -3610,3 +3610,74 @@ biet "scaler dung" voi "scaler cu". Thay bang phep kiem **TU NHAT QUAN**, co kha
 float64) trong sai so tuong doi 1e-4.** Khong dat ⇒ scaler cu hoac `compute_scaler` sap.
 Day la **sua mot moc sai**, khong phai ha nguong (R9): moc cu doi chieu voi mot con so **khong dung voi du
 lieu**; moc moi chat hon vi no khong the dat bang cach khong lam gi.
+
+---
+
+## Muc 46 -- Quy dao loss cua lan huan luyen Rev 20 (MAF, 25 epoch): doc lai cho dung
+
+Nguon: CSV nguoi dung cung cap, epoch 0-18 cua lan chay `m20_train_maf`. Day la **lan chay da sinh ra
+0/29 phan tu lien thong** (Muc 43), nen moi ket luan rut ra tu no phai doc duoi anh sang do.
+
+| | epoch 0 | epoch 18 |
+|---|---|---|
+| Total_Loss | 15.1499 | 12.6031 |
+| Token_Loss | 3.6411 | 2.3840 |
+| Geo_Loss (clamped) | 7.9445 | 7.0420 |
+| Geo_Loss_Unclamped | 9.7558 | 8.4456 |
+| Pocket_Loss | 3.5644 | 3.1771 |
+| Int_Loss | 0.0001 | 0.0001 |
+
+### 46.1 Token_Loss 3.349 -> 2.384 **khong** phai bang chung vocab moi tot hon
+
+Cach doc truc giac ("loss giam 0.97 nat, vay sua S1 co ich") **sai**, vi hai con so thuoc hai bo tu vung
+khac nhau. Tran doan ngau nhien dong deu:
+
+- vocab cu 19033: ln(19033) = 9.854
+- vocab moi  3983: ln(3983)  = 8.290
+- chenh **1.564 nat cho khong**, chi do tu vung nho di.
+
+Muc giam thuc te chi **0.965 nat** < 1.564. Theo ty le, perplexity/|V| **tang** tu 0.00150 len 0.00272.
+Ngoai ra thu tu fragment cung da doi (N1, thu tu DFS theo Jin et al. 2018), nen bai toan du doan khong
+con la bai toan cu. **Ket luan: hai con so khong so sanh duoc; khong duoc tuyen bo cai thien.**
+(R5 -- tieu chi phai co kha nang that bai; phep so sanh nay khong co.)
+
+Dieu doc duoc mot cach hop le: 2.384 nat so voi tran 8.290 nat, tuc mo hinh token hoc that, con xa muc
+doan mu.
+
+### 46.2 Geo_Loss_Unclamped cho mot uoc luong **doc lap** ve tran cua kenh hinh hoc
+
+Trong khong gian da chuan hoa, neu mo hinh chi du doan **phan bo bien** N(0,1) tren 7 chieu thi
+NLL = 3.5 + 3.5*ln(2pi) = **9.9326 nat**. Quan sat o epoch 18 la **8.4456 nat**.
+
+- khoang cach: **1.487 nat toan cuc = 0.2124 nat/chieu**
+- quy ra do co lai cua do lech chuan co dieu kien: exp(-0.2124) = **0.8086**
+- R^2 tuong duong: 1 - 0.8086^2 = **0.3461**
+
+Doi chieu **tran cua probe tuyen tinh do truc tiep o Muc 43.6: R^2 = 0.2299.** Hai con so den tu hai
+phep do hoan toan khac nhau (mot tu NLL cua flow trong luc huan luyen, mot tu probe tuyen tinh tren
+embedding) nhung cung noi mot dieu: **dieu kien hoa theo tui chi giai thich duoc khoang mot phan ba
+phuong sai tu the, va do la tran, khong phai san.** Bang chung doc lap thu hai cho ket luan Muc 43.7.
+
+Luu y gioi han: 0.3461 la trung binh hinh hoc tren ca 7 chieu, gop chung `d/theta/phi` voi bon chieu
+quaternion; no khong tach duoc chieu nao dong gop. Khong dung no thay cho phep do tu the truc tiep.
+
+### 46.3 Ca bon loss **van dang giam** o epoch 18 -- va dieu do khong tran an
+
+Token_Loss con giam ~0.03 nat/epoch giua epoch 17 va 18; Geo va Pocket cung chua phang. Theo le thuong
+day la ly do de huan luyen lau hon 25 epoch.
+
+**Nhung lan chay nay ket thuc voi 0/29 phan tu lien thong.** Nghia la trong suot 25 epoch, bon duong
+loss deu di xuong trong khi **dai luong quyet dinh san pham cuoi -- phan tu co noi duoc hay khong --
+dung yen o 0**. Day la bang chung truc tiep rang **loss huan luyen cua kien truc Rev 20 khong phai
+proxy cho muc tieu cuoi**, dung voi phan tich Muc 43.7 (7D khong co kenh lien ket; sai so tu the pha
+huy *danh tinh phan tu*, khong chi pha tu the).
+
+He qua cho lan huan luyen sap toi:
+1. **Khong lay "loss van giam" lam ly do keo dai epoch.** Truoc khi tang `--max-epochs`, phai co
+   duong **val** va it nhat mot phep do cap phan tu (ty le lien thong tren valid).
+2. Ba loss moi (`loss_parent`, `loss_attach_self`, `loss_attach_parent`) la nhung duong **co lien he
+   truc tiep** toi tinh lien thong -- khac han bon duong tren. Do la ly do chung duoc theo doi rieng.
+
+### 46.4 Int_Loss = 0.0001 co dinh
+
+Dung nhu cau hinh: `lambda_int = 0.0`. Khong phai loi.
