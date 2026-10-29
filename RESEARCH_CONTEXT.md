@@ -3271,3 +3271,35 @@ Duong dan that la `/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG`; khong co 
 `WORKING_RULES` muc E va moi khoi lenh tro ly dua ra tu Muc 34 den nay deu ghi `cd ~/SAMG` — **sai**.
 Cac lan chay truoc van dung vi nguoi dung da o san thu muc do. Da sua mau lenh chuan sang
 `export SAMG=/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG` roi `cd $SAMG`.
+
+### 40.4. Bo PHU THUOC Apo2Mol: viet bo lap rap cua rieng du an (`src/assemble.py`)
+**Su that bi bo sot:** server **khong co** repo Apo2Mol (nguoi dung da noi; tro ly van viet code import
+tu `Apo2Mol/utils/`). `Apo2Mol/` chi ton tai o may **local**. Day la lan thu hai tro ly dung mot thu
+chi co o local lam can cu (lan truoc: `logs/m12b_tanh.log`, Muc 37-pre).
+
+**Nhung doi huong nay tot hon ve ky thuat, khong chi la vong tranh:**
+`reconstruct_from_generated` (Apo2Mol, goc tu liGAN, GPL-2.0) **vut bo toan bo thong tin lien ket** roi
+de OpenBabel suy lai bac lien ket + thom tinh **tu toa do**. O day do la mat mat **khong can thiet**:
+ta **da biet** lien ket trong tung fragment — chinh SMILES cua no mang thong tin do. Chi con phai quyet
+dinh fragment noi voi fragment o dau, ma `FragmentOnBonds` dat nguyen tu dummy **tai dung vi tri** cua
+nguyen tu o dau kia lien ket bi cat ⇒ ghep cap bang khoang cach la **dung nguyen ban**, khong suy doan.
+Them nua `step0:206` chi cat lien ket **don** ⇒ moi lien ket lien-fragment can noi lai deu la lien ket don.
+Lay bac lien ket tu SMILES **chinh xac hon** suy lai tu hinh hoc, nhat la voi vong thom va nhom tich dien.
+Va tranh duoc viec dua ma nguon GPL-2.0 vao du an.
+
+**Mat xich kho duy nhat — tuong ung nguyen tu:** `local_coords` luu theo thu tu **canonical rank** cua
+step0, con `Chem.MolFromSmiles` tra ve thu tu khac. Khop bang substructure match voi **bac lien ket tong
+quat** (`AdjustQueryParameters.makeBondsGeneric`), do thi do dung tu ban kinh cong hoa tri
+(Cordero et al. 2008). Fragment **doi xung** co nhieu khop, nhung chung la anh cua nhau qua phep tu dang
+cau ⇒ cho **cung mot phan tu**, nen lay khop nao cung duoc.
+
+**Chi so hoa hoc cung bo phu thuoc:** SA dung `sascorer` **di kem RDKit** (`RDConfig.RDContribDir/SA_Score`)
+— ban chinh thuc cua Ertl & Schuffenhauer (2009), **cung nguon** ma Apo2Mol chep lai. QED/logP/Lipinski
+dung rdkit truc tiep; 5 quy tac Lipinski giu **dung dinh nghia** cua `scoring_func.py:obey_lipinski`.
+**Con lai phu thuoc Apo2Mol:** chi buoc **Vina** (`docking_vina.py` can `meeko`, `vina`, `AutoDockTools`).
+Se xu ly rieng o buoc danh gia; `openbabel` **da co** trong env `samg`.
+
+**Chan doan moi cua buoc lap rap** (bao cao kem, chua dat nguong): so lien ket lien-fragment, so dummy
+**mo coi** (khong ghep duoc trong 1,5 A), va ty le phan tu **lien thong** (1 manh). Ty le lien thong thap
+la dau hieu pose sai lam cac diem gan khong gap nhau — day la thong tin ve **chat luong pose**, khong
+phai loi lap rap.
