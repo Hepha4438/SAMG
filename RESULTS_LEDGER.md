@@ -25,6 +25,15 @@
 `qw..qz` = **phép quay**. ⚠️ Mục 19–24 có chỗ gọi `theta/phi` là "chiều quay" — **sai**, đã sửa ở
 Mục 25.4.
 
+⚠️ **[CẬP NHẬT — Mục 45.5]** Bảng scaler cũ ghi ở đây **không khớp dữ liệu**: file scaler trên đĩa đã cũ
+hơn cả pkl, qua nhiều lần chạy lại `step0` mà `compute_scaler` không chạy lại (Mục 45.4). Giá trị **đúng**,
+tính trực tiếp từ pkl hiện tại (train, `frame_stable`, float64):
+`d` 5,161378/2,478297 · `theta` 1,531624/0,664945 · `phi` 0,391346/1,759804 · `qw` 0,198343/0,458086 ·
+`qx` 0,198508/0,454602 · `qy` 0,208647/0,459332 · `qz` 0,187691/0,463692.
+Bốn chiều quaternion đổi so với bảng cũ vì S1 (`dummyLabels`) đổi thứ hạng canonical trong fragment
+(isotope ảnh hưởng `CanonicalRankAtoms`) ⇒ đổi khung fragment ⇒ đổi quaternion. `d/theta/phi` không đổi.
+Ảnh hưởng ~0,005 lần một độ lệch chuẩn; mỗi run đều tự nhất quán nên **các số đã báo cáo không bị vô hiệu**.
+Bảng cũ giữ lại để truy nguồn:
 `scaler_7d.pt` (mean / std): `d` 5,161378/2,478297 · `theta` 1,531624/0,664945 ·
 `phi` 0,391346/1,759804 · `qw` 0,200377/0,456459 · `qx` 0,204276/0,458135 ·
 `qy` 0,201783/0,457270 · `qz` 0,185659/0,464332.
