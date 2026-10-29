@@ -19,7 +19,7 @@ thể còn hiệu lực.
 |---|---|
 | Repo | `https://github.com/Hepha4438/SAMG.git`, nhánh **`main3`** |
 | Local (macOS, máy người dùng) | `/Users/HIEU/Workspaces/Projects/SAMG` |
-| Server GPU | `/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG`. Lệnh chạy dùng `~/SAMG` — quan hệ (symlink?) **CHƯA XÁC MINH**; chạy `readlink -f ~/SAMG` trên server |
+| Server GPU | `/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG` — **`~/SAMG` KHÔNG tồn tại** (xác minh 2026-10-29). Dùng `export SAMG=/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG` rồi `cd $SAMG` |
 | conda env (server) | `samg` |
 | GPU | 3× RTX A5000 24 GB, **dùng chung với người khác** |
 | HEAD | xem `git log --oneline -3` trên `main3`; M12 chạy ở `53b4778` |
@@ -57,7 +57,6 @@ trung bình quaternion theo thành phần sai toán học; khung quy chiếu kh�
 
 Phép nghịch đảo đã xác định đầy đủ (37-pre.3); mắt xích thiếu duy nhất là toạ độ cục bộ của fragment —
 dựng lại được bằng script duyệt SDF, **không** phải chạy lại step0 2,5 giờ.
-Còn thiếu: `readlink -f ~/SAMG`; kiểm L4 (lệnh trong Rev 20).
 
 ## Quyết định dự án (2026-10-01, người dùng đồng ý): KHÔNG viết lại từ đầu
 Mọi bug đã sửa là bug **quy ước miền** (frame, thứ tự quaternion, ghép dữ liệu, mask padding, nhiễu
