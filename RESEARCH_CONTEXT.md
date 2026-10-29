@@ -3542,3 +3542,71 @@ Hai cach them kenh lien ket:
   lua chon khong hop le ⇒ **khong the sinh ra cau truc sai**.
 **Chon (ii).** Ly do quyet dinh: khong lam nhieu duong hinh hoc da xac nhan, va bao dam tinh hop le bang
 che thay vi bang hoc.
+
+---
+
+## 45. Rev 21 S5 (server, 2026-10-30): K5/K7/K8/K9 DAT; K6 lo ra **SCALER DA LECH DU LIEU TU LAU**
+Logs: `logs/m26_*`, `logs/m27_*`, `logs/m28_pkl_diff_full.log`.
+
+### 45.1. K5 DAT sau khi chap nhan GOC MOI
+`parent == -1` o `t >= 1` xuat hien **11/119.431 = 0,0092%** vi tri: ligand co **nhieu thanh phan roi
+nhau** (muoi/doi ion trong SDF) ⇒ do thi fragment la **RUNG**, khong phai cay. Q1 (Muc 44.1) do tren
+1.894 phan tu khong gap ca nao; tren 23.660 thi co. Hop le, da sua tieu chi. `parent[0] == -1` o 100%.
+
+### 45.2. **K8 DAT: 399/400 = 0,9975** — KENH LIEN KET HOAT DONG
+Tai dung **chi tu** `parent`/`attach_self`/`attach_parent`, **khong dung hinh hoc lien-fragment**, cho do
+thi cau tao **trung khop phan tu goc**. ⇒ **Huong (b) duoc xac nhan**: do thi phan tu duoc xac dinh boi
+TOKEN, doc lap voi do chinh xac pose. Day la tieu chi quyet dinh cua Rev 21.
+Mot ca truot: `*O*` khong khop duoc thu tu nguyen tu (cung fragment da gay bat thuong o Muc 38.2/39.3).
+
+### 45.3. K8 ban dau that bai vi **SO SAI DAI LUONG** — lai la loi kieu T3
+Phien ban dau so `MolToSmiles` **co lap the**: 242/400 = 0,605. Lap the cua ban lap rap phu thuoc thu tu
+hang xom quanh tam bat doi, ma thu tu do **doi** khi ta bo dummy va them lien ket moi ⇒ so SMILES co lap
+the **khong do** dieu ta muon biet (do thi co dung khong). Doi sang **do thi cau tao** (`isomericSmiles=
+False`): 0,9975. Lap the bao cao rieng: **0,605** — mot van de that, nhung rieng biet va khong chan duong.
+Day la lan thu hai tro ly dat tieu chi len sai dai luong (lan truoc: T3, Muc 41.2).
+
+### 45.4. K6: `compute_scaler.py` o Rev 20 **DA SAP**, nen K1 khi do la phep kiem RONG
+```
+logs/m16_scaler.log:  0%| | 0/17200
+  File "step6_trainer.py", line 177, in __getitem__
+    data.pocket_R = torch.tensor(pkl_data["pocket_R"], ...)
+KeyError: 'pocket_R'
+```
+Thu tu lenh o Rev 20 A0 la `step0 → compute_scaler → check`, trong khi `pocket_R` chi duoc khoi phuc
+**sau do** o A1b (Muc 38.6). ⇒ `compute_scaler` sap ngay item dau, **khong ghi file**.
+⇒ `dataset/processed/scaler_7d.pt` van la ban CU, va **K1 da so file do voi mot ban sao cua chinh no**
+(`/tmp/scaler_7d_OLD.pt`) ⇒ **dat mot cach vo nghia**.
+**Loi thiet ke phep kiem cua tro ly:** mot phep kiem khong-doi phai xac minh **TIEN DE** cua no — rang san
+pham thuc su da duoc tao lai — truoc khi tin vao ket qua so sanh. Them vao R15.
+
+### 45.5. Trung binh 7D that qua ba phien ban du lieu — SCALER DA LECH TU LAU
+Tinh **truc tiep tu pkl** (train, `frame_stable`, float64), bo qua `Dataset`/`compute_scaler`:
+```
+                      d         theta     phi        qw        qx        qy        qz
+A1 (file scaler cu)   5,161378  1,531624  0,391346   0,200377  0,204276  0,201783  0,185659
+TRUOC Rev20 (pkl)     5,161319  1,531652  0,391268   0,199063  0,202019  0,204564  0,187700
+HIEN TAI    (pkl)     5,161378  1,531624  0,391346   0,198343  0,198508  0,208647  0,187691
+```
+* `d/theta/phi`: giong nhau o ca ba (chenh o chu so thu 5 la do ban backup thieu 1 complex).
+* **Quaternion khac nhau o ca ba phien ban.**
+**(i) TRUOC Rev20 → HIEN TAI: do S1 (`dummyLabels`), dung nhu du doan.** `Chem.FragmentOnBonds` khong
+truyen `dummyLabels` thi dummy mang isotope = chi so nguyen tu; `CanonicalRankAtoms` **co tinh isotope**.
+Bo isotope ⇒ cac dummy tro nen **tuong duong**, thu hang canonical trong fragment doi ⇒ `coords_canon` doi
+⇒ `_get_local_frame` doi ⇒ **quaternion doi**. `d/theta/phi` khong doi vi chi phu thuoc **tam** fragment,
+bat bien voi hoan vi. Day la he qua **da luong truoc duoc** cua S1, va K1 le ra phai bat — nhung K1 rong (45.4).
+**(ii) A1 khong khop CA HAI phien ban pkl.** ⇒ file scaler tren dia da **cu hon** ca du lieu truoc Rev 20:
+o mot lan chay lai `step0` **truoc do nua**, `compute_scaler` cung khong duoc chay lai. Cung mot loai loi,
+som hon, va **chua tung co phep kiem nao bat**.
+**Muc do anh huong:** lech ~1% o `shift` cua quaternion = **~0,005 lan mot do lech chuan** (0,002/0,46).
+Rat nho cho viec hoc. Va moi run deu **tu nhat quan** (huan luyen va sinh mau dung cung mot file scaler),
+nen cac so da bao cao **khong bi vo hieu**. Cai hong la **quy trinh**, khong phai ket qua.
+**Bang A1 trong RESULTS_LEDGER da loi thoi** — cap nhat theo cot HIEN TAI.
+
+### 45.6. K6 dinh nghia lai — tu so voi bang lich su sang so voi CHINH DU LIEU
+Nguong cu ("khop bang A1 trong 1e-4") so voi mot **bang lich su** co the da cu ⇒ khong co kha nang phan
+biet "scaler dung" voi "scaler cu". Thay bang phep kiem **TU NHAT QUAN**, co kha nang phat hien that:
+**`scaler_7d.pt` phai khop trung binh/do lech chuan tinh TRUC TIEP tu pkl (train, `frame_stable`,
+float64) trong sai so tuong doi 1e-4.** Khong dat ⇒ scaler cu hoac `compute_scaler` sap.
+Day la **sua mot moc sai**, khong phai ha nguong (R9): moc cu doi chieu voi mot con so **khong dung voi du
+lieu**; moc moi chat hon vi no khong the dat bang cach khong lam gi.
