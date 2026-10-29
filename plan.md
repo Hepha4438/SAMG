@@ -1743,3 +1743,31 @@ Sau ~2 phut phai thay epoch 0 chay va `Token_Loss` giam. **Token_Loss dau ky von
 (~ln(3983) = 8,29 thay vi ~ln(19033) = 9,85 khi doan deu) — day la **bao cao**, khong phai cong chan.
 
 Ket qua ghi vao **Muc 40**.
+
+---
+
+# PLAN Rev 20 — sau khi C (lan 2) chay xong (2026-10-29)
+
+Huan luyen 25 epoch da xong tren tu vung moi (Muc 40). Truoc khi sinh mau: **do tran cua duong lap rap**.
+
+## A2b. Tran lap rap (khong mo hinh, ~10-20 phut) — CONG CHAN
+```bash
+cd ~/SAMG && git pull && git log --oneline -2 && conda activate samg
+python -u src/check_assembly_ceiling.py --split test 2>&1 | tee logs/m21_ceiling_test.log
+```
+Tieu chi ghi cung o RESEARCH_CONTEXT **40.1**: `recon_success(gt_exact) >= 0,90` ⇒ di tiep;
+`< 0,70` ⇒ **DUNG**, lap rap la nut that.
+Hang `gt_template` la **tran tren cua mo hinh** — moi so cua mo hinh ve sau phai doc **so voi hang nay**,
+khong phai so voi `reference`.
+
+## Can gui kem
+1. Phan duoi `logs/m20_train_maf.log` (quy dao loss, epoch tot nhat, ten checkpoint).
+2. `logs/m19_fragdict_medoid.log` (do phu TU VUNG phai = 1,0000; ngoai lai hinh hoc phai = 0).
+
+## A2c (viet sau khi A2b dat). `step7_generate_eval.py`
+Sinh 5 phan tu moi hoc (Apo2Mol `--num_samples 5`), dat pose bang nghich dao 37-pre.3 + template medoid,
+lap rap bang `reconstruct_from_generated`, danh gia 6 chi so Apo2Mol + Validity/Novelty.
+**Van de do dai chuoi (Muc 40.2): vocab KHONG co `[EOS]`** ⇒ lay do dai tu phan phoi thuc nghiem cua train.
+Ghi `[EOS]` vao Rev 21.
+
+Ket qua ghi vao **Muc 41**.
