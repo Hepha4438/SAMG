@@ -485,6 +485,9 @@ if __name__ == "__main__":
                       help="duong dan .ckpt de resume, hoac 'auto' lay file moi nhat. Mac dinh: "
                            "KHONG resume (huan luyen tu dau).")
     _ap.add_argument("--max-epochs", type=int, default=None)
+    # Giu co nay trong repo: truoc day no la sua doi cuc bo chua commit nen bi mat
+    # khi argparse duoc viet lai o Rev 21.
+    _ap.add_argument("--batch-size", type=int, default=8)
     _args = _ap.parse_args()
 
     config = OmegaConf.create({
@@ -492,7 +495,7 @@ if __name__ == "__main__":
         "num_heads": 4,
         "num_gaussians": 10,
         "lr": 1e-4,
-        "batch_size": 8,
+        "batch_size": _args.batch_size,
         "seed": SEED,
         # P2b: xem docstring SAMGLightningModule.build_ligand_input. "dummy" là mặc định
         # an toàn cho tới khi test_encoder_no_ligand.py xác nhận "empty" chạy được.
