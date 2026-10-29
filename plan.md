@@ -1771,3 +1771,21 @@ lap rap bang `reconstruct_from_generated`, danh gia 6 chi so Apo2Mol + Validity/
 Ghi `[EOS]` vao Rev 21.
 
 Ket qua ghi vao **Muc 41**.
+
+---
+
+# PLAN Rev 20 — sua A2b sau khi phat hien server khong co Apo2Mol (2026-10-29)
+
+Can cu **40.4**. Bo hoan toan phu thuoc Apo2Mol cho buoc lap rap + chi so hoa hoc; viet
+`src/assemble.py` cua du an. Chi buoc **Vina** con can `meeko`/`vina`/`AutoDockTools`, xu ly sau.
+
+```bash
+export SAMG=/vol/grid-solar/sgeusers/longnd/molecular_rl/SAMG
+cd $SAMG && git pull && git log --oneline -1 && conda activate samg
+# chay thu 20 complex truoc (~1 phut) de bat loi som
+python -u src/check_assembly_ceiling.py --split test --n 20 2>&1 | tee logs/m21_ceiling_smoke.log
+# neu khong no: chay het test
+python -u src/check_assembly_ceiling.py --split test 2>&1 | tee logs/m21_ceiling_test.log
+```
+Tieu chi T1/T2/T3 giu nguyen (Muc 40.1). Doc them ba chan doan lap rap: so lien ket lien-fragment,
+so dummy mo coi, ty le phan tu lien thong.
