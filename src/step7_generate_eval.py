@@ -95,7 +95,7 @@ def generate_one(model, h_target, target_mask, vocab_size, length, temperature, 
     inp = sos
     toks = []
     for _ in range(length):
-        logits, _, _, _ = model.generator(inp, h_target, [], target_mask=target_mask)
+        logits, _, _, _, _lk = model.generator(inp, h_target, [], target_mask=target_mask)
         p = torch.softmax(logits[:, -1, :] / temperature, dim=-1)
         p[:, banned] = 0.0
         p = p / p.sum(dim=-1, keepdim=True).clamp_min(1e-12)
@@ -104,7 +104,7 @@ def generate_one(model, h_target, target_mask, vocab_size, length, temperature, 
         inp = torch.cat([inp, nxt], dim=1)
     tgt = torch.tensor([toks], dtype=torch.long, device=device)
     inp_final = torch.cat([sos, tgt[:, :-1]], dim=1)
-    _, _, sampled_7d, _ = model.generator(inp_final, h_target, [], target_mask=target_mask, target_ids=tgt)
+    _, _, sampled_7d, _, _lk = model.generator(inp_final, h_target, [], target_mask=target_mask, target_ids=tgt)
     return toks, sampled_7d[0].double().cpu().numpy()
 
 
