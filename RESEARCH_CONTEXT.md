@@ -3942,3 +3942,64 @@ nay khong phai proxy cho muc tieu cuoi.
 
 Phan dinh: xem dong `khoa khop`, va xem `ls -t saved_checkpoints_flow/` co xuat hien
 `samg-opt-epoch=0{14,...}` moi hay khong.
+
+---
+
+## Muc 52 -- Giai quyet bat nhat 51.2, va con so CHINH THUC cua ba head lien ket
+
+### 52.1 Bat nhat da duoc giai thich het
+
+Do tren **toan bo** valid (96 batch, da xao, checkpoint `periodic-epoch=014-v1`):
+
+| | trung binh | sd | SEM = sd/sqrt(96) |
+|---|---|---|---|
+| loss_parent | **0.0835** | 0.1250 | 0.013 |
+| loss_attach_self | **0.4544** | 0.1026 | 0.010 |
+| loss_attach_parent | **0.6677** | 0.1371 | 0.014 |
+| loss_link | 1.2056 | 0.2842 | 0.029 |
+| loss_token | 3.8750 | 1.0673 | 0.109 |
+| loss_geo | 6.9706 | 0.4537 | 0.046 |
+| **loss_total** | **14.5576** | 1.6954 | **0.173** |
+
+Lightning ghi `val_total_loss = 14.7169` o epoch 14 (ten checkpoint). Chenh **0.159**, nho hon mot
+SEM (0.173). **Khop.** Bat nhat 2,70 o Muc 51.2 hoan toan do **10 batch dau la mot khuc lien tiep**
+cua tap valid xep theo `pli_id`, khong phai mau ngau nhien. Ca hai gia thuyet (a) nap thieu trong so
+va (b) overfit sau epoch 13 **deu bi loai**: `khoa khop 290/290`, va epoch 14 co val 14.7169 -- gan
+nhu phang so voi epoch 13 (14.6493), khong di len.
+
+**Ba lan trong mot ngay, cung mot dang loi, ba quy mo khac nhau:**
+1. Muc 47.2 -- ket luan tu **mot gia tri** `rmsd_spread`.
+2. Muc 48.3 -- ket luan tu **mot batch** `loss_token`.
+3. Muc 51.2 -- ket luan tu **muoi batch dau** khong xao.
+
+Bo sung vao R15b: **mot phep do tren tap con phai noi ro tap con do duoc chon the nao.** "N batch
+dau cua loader" khong phai mau ngau nhien tru khi loader co `shuffle=True`. Mac dinh cua
+`check_link_heads.py` da doi thanh xao, va `--batches 0` chay toan bo split.
+
+### 52.2 Con so chinh thuc -- thay cho Muc 48.2 va 51.1
+
+| head | muc dong deu | do duoc (toan valid) | giam | perplexity |
+|---|---|---|---|---|
+| **parent** | 1.0210 | **0.0835** | **91.8%** | 1.087 |
+| attach_self | 2.0794 | 0.4544 | 78.1% | 1.575 |
+| attach_parent | 2.0794 | 0.6677 | 67.9% | 1.950 |
+
+Ket luan cua Muc 48.2 **giu nguyen va nay da vung**: ba head deu hoc, `parent` khong ket. Khac biet
+so voi cac uoc luong truoc (0.0639, 0.0386) chi la nhieu chon mau; huong va do lon khong doi.
+
+### 52.3 Head token CO khoang cach tong quat hoa, nhung nho hon con so da rut lai
+
+Valid `loss_token = 3.8750 +/- 0.109`. Train o epoch 8 la 2.8787, ngoai suy toi epoch 14 khoang 2.6.
+Khoang cach **~1.25 nat** (khong phai 1.95 nhu Muc 48.3 da noi), tuong duong perplexity tren valid
+lon hon khoang **3,5 lan**. Voi SEM 0.109 thi khoang cach nay la **that**, khong phai nhieu.
+
+Luu y ve phep so sanh: "train loss" la trung binh epoch **trong luc mo hinh dang thay doi**, khong
+phai danh gia sach tren tap train. Nen 1,25 la uoc luong tho, co xu huong **phong dai** khoang cach.
+
+Doi chieu quan trong: `loss_geo` tren valid = 6.9706, trong khi train epoch 8 = 7.2817 (ngoai suy
+epoch 14 ~ 7.05). **Kenh hinh hoc tong quat hoa tot, khong co khoang cach; chi head token co.**
+Day la mot quan sat co ich cho Rev 22: neu can regularize thi nham vao nhanh token, khong phai
+nhanh hinh hoc.
+
+Chua phai van de cap bach: `val_total_loss` van phang/giam nhe o epoch 14, chua co dau hieu overfit
+o muc tong.
