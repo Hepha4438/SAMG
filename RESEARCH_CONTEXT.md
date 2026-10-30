@@ -3752,3 +3752,75 @@ cua **code hong**.
   fragment ngoai tu dien train. Khong rang buoc sinh mau.
 
 Khong duoc dung 0.7330 nhu mot gioi han tren cua chat luong sinh.
+
+---
+
+## Muc 48 -- Kenh lien ket (Rev 21) HOAT DONG: ba head deu hoc, ke ca `parent`
+
+### 48.1 Suy ra `loss_link` tu `epoch_losses.csv` ma khong can wandb
+
+`log_losses` chi ghi 6 cot va khong co ba loss lien ket (da sua, commit `1cb042d`, co hieu luc tu lan
+chay sau). Nhung o Rev 20 `Total_Loss` **bang dung** tong bon thanh phan (15.1499 so voi 15.1501), nen
+o Rev 21 phan du chinh la `loss_link`:
+
+| epoch | Total | 4 thanh phan | loss_link |
+|---|---|---|---|
+| khoi tao (L4) | -- | -- | 5.2538 |
+| 0 | 16.9237 | 15.3534 | 1.5703 |
+| 1 | 15.7426 | 14.4295 | 1.3131 |
+| 4 | 14.9585 | 13.7350 | 1.2235 |
+| 8 | 14.4867 | 13.3081 | 1.1786 |
+
+Giam 70% ngay trong epoch dau. Nhung day la **tong** ba head; vi CE >= 0 va tong 1.1786 < ln(8) nen
+suy ra duoc hai head attach da hoc, **khong** suy ra duoc gi ve `parent` (no co the van ket o 1.021
+neu hai head kia cong lai chi 0.158).
+
+### 48.2 Tach ba head tu checkpoint -- `parent` giam 94%
+
+Do tren **valid** voi checkpoint giua chung (`--ckpt auto`), `check_link_heads.py`:
+
+| head | muc dong deu | do duoc | giam | perplexity |
+|---|---|---|---|---|
+| **parent** | 1.0210 | **0.0639** | **93.7%** | 1.066 |
+| attach_self | 2.0794 | 0.4820 | 76.8% | 1.619 |
+| attach_parent | 2.0794 | 0.5867 | 71.8% | 1.798 |
+| **loss_link** | 5.1798 | **1.1326** | 78.1% | -- |
+
+**`parent` khong ket.** Perplexity 1.066 nghia la mo hinh gan nhu luon chon dung fragment cha. Day la
+rui ro duy nhat con bo ngo o 48.1, nay da loai tru.
+
+Quan trong hon: `loss_link` tren **valid** = 1.1326, thap hon ca tren **train** o epoch 8 (1.1786).
+**Kenh lien ket khong overfit.** Ket hop voi K8 = 0.9975 (kenh lien ket xac dinh duoc phan tu ma khong
+can hinh hoc lien-fragment), day la bang chung rang huong (b) o Muc 43.7 la dung huong.
+
+### 48.3 CANH BAO: head token co ve overfit manh
+
+Cung phep do do: `loss_token` tren **valid = 4.8236**, trong khi tren **train** o epoch 8 da la 2.8787
+(va checkpoint nay muon hon epoch 8 nen train con thap hon nua). Khoang cach >= 1.95 nat, tuc
+perplexity tren valid lon hon tren train it nhat **7 lan**.
+
+Chua ket luan: day la **mot batch valid duy nhat**, nhieu lon. Can (a) trung binh nhieu batch va
+(b) duong `val_total_loss` theo epoch -- co san trong **ten file checkpoint**
+(`samg-opt-{epoch:03d}-{val_total_loss:.4f}`, step6_trainer dong 578). Neu val loss da cham day va di
+len thi 25 epoch la **thua**, nguoc han voi suy doan o Muc 46.3.
+
+## Muc 49 -- Hai loi cua chinh phep kiem
+
+### 49.1 `--ckpt auto` tim sai thu muc
+
+Tim trong `checkpoints/`; `ModelCheckpoint` ghi vao `saved_checkpoints_flow/` (dong 577). Da sua va
+them loc bo file sua doi trong 60 giay qua, de khong nap checkpoint dang ghi do. Commit `b05a8ce`.
+
+### 49.2 L4 bi ap dung cho mo hinh DA hoc -- ket luan "KHONG DAT" la vo nghia
+
+L4 so loss voi muc doan dong deu de xac nhan **mask va muc tieu dung** o mo hinh **chua hoc**. Voi
+`--ckpt`, lech xa muc dong deu la **dieu mong muon**, vay ma script van in "L4 KHONG DAT" va
+"khong huan luyen lai" -- suyt lam dung mot lan chay 19 gio dang khoe manh.
+
+Day la mot tieu chi **dung dau hieu, sai chieu**: cung mot con so (|lech| lon) la hong o che do nay va
+la tot o che do kia. Da tach lam hai: `--ckpt` chuyen sang **L4'** (moi head phai THAP hon muc dong
+deu it nhat 10%). Commit `83b183e`.
+
+Bo sung vao R15b: mot phep kiem khong chi phai xac minh tien de cua no, ma con phai biet **no dang o
+che do nao** -- neu cung mot nguong duoc dung cho hai che do co chieu nguoc nhau thi no se bao dong
+gia o dung luc nguy hiem nhat.
