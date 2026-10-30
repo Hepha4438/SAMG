@@ -67,10 +67,16 @@ def main():
         path = args.ckpt
         if path == "auto":
             import glob as _g
-            cands = _g.glob(os.path.join(SAMG_ROOT, "checkpoints", "**", "*.ckpt"), recursive=True)
+            # ModelCheckpoint ghi vao saved_checkpoints_flow/ (step6_trainer dong 577).
+            cands = []
+            for sub in ("saved_checkpoints_flow", "checkpoints"):
+                cands += _g.glob(os.path.join(SAMG_ROOT, sub, "**", "*.ckpt"), recursive=True)
             if not cands:
-                raise SystemExit("[!] khong tim thay .ckpt nao trong checkpoints/")
-            path = max(cands, key=os.path.getmtime)
+                raise SystemExit("[!] khong tim thay .ckpt nao trong saved_checkpoints_flow/ hay checkpoints/")
+            # Bo file dang duoc ghi do (sua doi trong 60 giay qua) de khong nap checkpoint cut.
+            import time as _t
+            fresh = [c for c in cands if _t.time() - os.path.getmtime(c) > 60]
+            path = max(fresh or cands, key=os.path.getmtime)
         sd = torch.load(path, map_location=device)
         sd = sd.get("state_dict", sd)
         miss, unexp = model.load_state_dict(sd, strict=False)
