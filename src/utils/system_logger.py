@@ -15,11 +15,14 @@ class SAMGLogger:
         self.flow_scale_file = os.path.join(self.log_dir, "flow_scale_trace.csv")
         self.error_buffer = defaultdict(int)
 
-        # Khởi tạo Header cho CSV nếu file chưa tồn tại
-        if not os.path.exists(self.loss_file):
-            with open(self.loss_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(["Epoch", "Total_Loss", "Token_Loss", "Geo_Loss", "Pocket_Loss", "Int_Loss", "Geo_Loss_Unclamped"])
+        # Muc 48: ba loss cua kenh lien ket PHAI co trong CSV, neu khong thi khong ve duoc
+        # duong cua chung theo epoch -- ma do chinh la dai luong quyet dinh cua Rev 21.
+        self.LOSS_HEADER = ["Epoch", "Total_Loss", "Token_Loss", "Geo_Loss", "Pocket_Loss",
+                            "Int_Loss", "Geo_Loss_Unclamped",
+                            "Parent_Loss", "AttachSelf_Loss", "AttachParent_Loss"]
+        # Khởi tạo Header cho CSV nếu file chưa tồn tại, hoặc XOAY file cu neu header khac
+        # (them cot ma giu nguyen file cu se lam moi dong sau lech cot so voi header).
+        self._init_csv(self.loss_file, self.LOSS_HEADER)
 
         if not os.path.exists(self.hw_file):
             with open(self.hw_file, 'w', newline='', encoding='utf-8') as f:
@@ -37,18 +40,27 @@ class SAMGLogger:
                           + ["nll_median", "nll_p99", "lr"])
                 writer.writerow(header)
 
+    @staticmethod
+    def _init_csv(path, header):
+        """Tao file voi header; neu da ton tai voi header KHAC thi doi ten file cu."""
+        if os.path.exists(path):
+            try:
+                with open(path, newline='', encoding='utf-8') as f:
+                    old = next(csv.reader(f), [])
+            except Exception:
+                old = []
+            if old == header:
+                return
+            os.rename(path, path + "." + time.strftime("%Y%m%d_%H%M%S") + ".bak")
+        with open(path, 'w', newline='', encoding='utf-8') as f:
+            csv.writer(f).writerow(header)
+
     def log_losses(self, epoch, loss_dict):
+        keys = ["loss_total", "loss_token", "loss_geo", "loss_pocket", "loss_int",
+                "loss_geo_unclamped", "loss_parent", "loss_attach_self", "loss_attach_parent"]
         with open(self.loss_file, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                epoch, 
-                f"{loss_dict.get('loss_total', 0):.4f}", 
-                f"{loss_dict.get('loss_token', 0):.4f}", 
-                f"{loss_dict.get('loss_geo', 0):.4f}", 
-                f"{loss_dict.get('loss_pocket', 0):.4f}",
-                f"{loss_dict.get('loss_int', 0):.4f}",
-                f"{loss_dict.get('loss_geo_unclamped', 0):.4f}"
-            ])
+            csv.writer(f).writerow(
+                [epoch] + [f"{float(loss_dict.get(k, 0)):.4f}" for k in keys])
 
     def log_flow_scale_stats(self, epoch, stats):
         dim_names = ["d", "theta", "phi", "qx", "qy", "qz", "qw"]
@@ -122,7 +134,12 @@ class SAMGLoggingCallback(pl.Callback):
             'loss_geo': _to_scalar(metrics.get('loss_geo', 0)),
             'loss_pocket': _to_scalar(metrics.get('loss_pocket', 0)),
             'loss_int': _to_scalar(metrics.get('loss_int', 0)),
-            'loss_geo_unclamped': _to_scalar(metrics.get('loss_geo_unclamped', 0))
+            'loss_geo_unclamped': _to_scalar(metrics.get('loss_geo_unclamped', 0)),
+            # Muc 48: ba head lien ket cua Rev 21. training_step day toan bo loss_dict vao
+            # callback_metrics nen cac khoa nay co san; thieu thi mac dinh 0.
+            'loss_parent': _to_scalar(metrics.get('loss_parent', 0)),
+            'loss_attach_self': _to_scalar(metrics.get('loss_attach_self', 0)),
+            'loss_attach_parent': _to_scalar(metrics.get('loss_attach_parent', 0)),
         }
         
         # Ghi ra ổ cứng (Chỉ ghi 1 lần duy nhất mỗi epoch)
