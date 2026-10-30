@@ -3889,3 +3889,56 @@ cha phai di truoc, va dummy duoc chi phai ton tai va chua bi chiem. Mo hinh duoc
 
 Them `--assemble geometry` de chay lai duong lap rap cu tren **cung bo mau sinh ra**: chenh lech
 giua hai che do do dung bang phan ma kenh lien ket mang lai, khong lan voi khac biet do lay mau.
+
+---
+
+## Muc 51 -- RUT LAI Muc 48.3; va mot bat nhat chua giai thich duoc
+
+### 51.1 Muc 48.3 (head token overfit) -- RUT LAI HOAN TOAN
+
+Do tren 10 batch valid (batch_size 8) voi checkpoint dang chay:
+
+| | trung binh | **do lech chuan** |
+|---|---|---|
+| loss_parent | 0.1496 | 0.1178 |
+| loss_attach_self | 0.6507 | 0.1464 |
+| loss_attach_parent | 0.7733 | 0.1000 |
+| loss_link | 1.5736 | 0.2183 |
+| **loss_token** | **6.8130** | **1.3352** |
+| loss_geo | 7.9488 | 0.2910 |
+| loss_total | 17.3482 | 1.4779 |
+
+`loss_token` co **sd = 1.3352** giua cac batch 8 phan tu. Hai so do mot-batch truoc day (4.8236 va
+5.0254) deu nam duoi trung binh hon mot do lech chuan. **Khong ket luan nao ve khoang cach
+train-valid co the rut ra tu mot batch**, va Muc 48.3 da lam dung dieu do. Rut lai.
+
+Day la lan thu hai trong cung mot ngay toi xay lap luan tren mot phep do don le (lan truoc:
+`rmsd_spread` 6,25 A, Muc 47.2). Ghi vao R15b: **truoc khi so sanh hai con so, phai biet do lech
+chuan cua phep do sinh ra chung.** Mot con so khong kem sai so khong so sanh duoc voi bat cu gi.
+
+Rieng ba head lien ket: sd nho (0.10-0.15) so voi muc giam (tu 1.021 -> 0.15 va 2.079 -> 0.65/0.77),
+nen ket luan "ba head dang hoc" o Muc 48.2 **van dung**. Chi cap nhat con so: tren 10 batch,
+`parent` giam 85,4% (khong phai 96,2% nhu mot batch may man cho thay).
+
+### 51.2 Bat nhat CHUA giai thich: 17.35 so voi 14.65
+
+`loss_total` do tren valid = **17.3482**, trong khi ten checkpoint ghi `val_total_loss=14.6493`
+(epoch 13). Chenh **2,70**, lon hon mot sd (1.4779). Hai kha nang, chua phan dinh duoc:
+
+**(a) Checkpoint nap khong day du.** `load_state_dict(..., strict=False)` cho phep bo qua khoa khong
+khop. Neu mot phan trong so la ngau nhien thi moi so o 51.1 deu vo gia tri. Script co in dong
+`khoa khop: N/M` nhung dong do bi `tail`/`grep` cat mat ca hai lan. **Phai xem dong do truoc khi
+tin bang tren.** (R15b: phep kiem phai xac minh tien de cua no.)
+
+**(b) Mo hinh da bat dau overfit sau epoch 13.** Bang chung gian tiep ung ho: `save_top_k=3` chi giu
+ba checkpoint tot nhat, va luc 22:55 ba cai do la epoch 10 / 12 / 13. Neu bat ky epoch nao tu 14 tro
+di tot hon 14.8257 thi no da thay cho epoch 10. **Khong cai nao thay** => moi epoch tu 14 den luc do
+deu co val loss te hon epoch 10.
+
+Neu (b) dung thi 25 epoch la **thua**, va checkpoint nen dung la epoch 13 chu khong phai `last`.
+Dieu nay nguoc han voi suy doan o Muc 46.3 ("van dang giam, co the can nhieu hon 25 epoch") -- suy
+doan do chi dua tren **train** loss, dung nhu canh bao o chinh Muc 46.3 rang train loss cua kien truc
+nay khong phai proxy cho muc tieu cuoi.
+
+Phan dinh: xem dong `khoa khop`, va xem `ls -t saved_checkpoints_flow/` co xuat hien
+`samg-opt-epoch=0{14,...}` moi hay khong.
