@@ -30,6 +30,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default="valid")
     ap.add_argument("--batch-size", type=int, default=8)
+    # Muc 49: nap trong so tu checkpoint de TACH ba head khi khong co wandb.
+    # Khong truyen --ckpt => mo hinh chua hoc, dung cho L1-L4 nhu truoc.
+    ap.add_argument("--ckpt", default=None, help="duong dan .ckpt; 'auto' = moi nhat trong checkpoints/")
+    ap.add_argument("--batches", type=int, default=1, help="so batch de lay trung binh")
     args = ap.parse_args()
     try:
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SAMG_ROOT,
@@ -59,6 +63,27 @@ def main():
                                     shift_factors=shift, scale_factors=scale).to(device)
     model.eval()
 
+    if args.ckpt:
+        path = args.ckpt
+        if path == "auto":
+            import glob as _g
+            cands = _g.glob(os.path.join(SAMG_ROOT, "checkpoints", "**", "*.ckpt"), recursive=True)
+            if not cands:
+                raise SystemExit("[!] khong tim thay .ckpt nao trong checkpoints/")
+            path = max(cands, key=os.path.getmtime)
+        sd = torch.load(path, map_location=device)
+        sd = sd.get("state_dict", sd)
+        miss, unexp = model.load_state_dict(sd, strict=False)
+        print(f"[*] nap checkpoint: {path}")
+        print(f"    thieu khoa: {len(miss)}  thua khoa: {len(unexp)}")
+        if miss:
+            print(f"    vi du thieu: {list(miss)[:5]}")
+        # R15b: neu khong khop khoa nao thi ta dang do mo hinh NGAU NHIEN va tuong la da hoc.
+        n_load = sum(1 for k in model.state_dict() if k in sd)
+        print(f"    khoa khop: {n_load}/{len(model.state_dict())}")
+        if n_load == 0:
+            raise SystemExit("[!] KHONG khoa nao khop -- checkpoint sai kien truc, dung lai.")
+
     ds = st.SAMGOptimizedDataset(st.DATASET_DIR, st.PROCESSED_DIR, vocab, st.SPLIT_FILE,
                                   split_mode=args.split, pos_scale=scale.flatten()[0].item())
     from datasets.pl_data import ProteinLigandDataLoader
@@ -66,6 +91,24 @@ def main():
                                                num_workers=0))).to(device)
     with torch.no_grad():
         total, ld = model.forward(batch)
+
+    if args.batches > 1:
+        import numpy as _np
+        acc = {}
+        dl = ProteinLigandDataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+        with torch.no_grad():
+            for i, b in enumerate(dl):
+                if i >= args.batches:
+                    break
+                _, d_ = model.forward(b.to(device))
+                for k, v in d_.items():
+                    acc.setdefault(k, []).append(float(v))
+        print(f"\n[*] trung binh tren {args.batches} batch (batch_size={args.batch_size}):")
+        for k in ["loss_parent", "loss_attach_self", "loss_attach_parent", "loss_link",
+                  "loss_token", "loss_geo", "loss_total"]:
+            if k in acc:
+                a = _np.asarray(acc[k])
+                print(f"    {k:20} = {a.mean():8.4f}  (sd {a.std():.4f}, n={a.size})")
 
     lens = batch.seq_len.tolist()
     lens = [lens] if isinstance(lens, int) else lens
