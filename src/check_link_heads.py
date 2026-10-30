@@ -109,12 +109,15 @@ def main():
                 _, d_ = model.forward(b.to(device))
                 for k, v in d_.items():
                     acc.setdefault(k, []).append(float(v))
-        print(f"\n[*] trung binh tren {args.batches} batch (batch_size={args.batch_size}):")
+        # In o CUOI output, khong phai o day: dat truoc L1 thi `tail` cat mat (da xay ra 2 lan).
+        avg_block = [f"\n[*] trung binh tren {args.batches} batch (batch_size={args.batch_size}):"]
         for k in ["loss_parent", "loss_attach_self", "loss_attach_parent", "loss_link",
                   "loss_token", "loss_geo", "loss_total"]:
             if k in acc:
                 a = _np.asarray(acc[k])
-                print(f"    {k:20} = {a.mean():8.4f}  (sd {a.std():.4f}, n={a.size})")
+                avg_block.append(f"    {k:20} = {a.mean():8.4f}  (sd {a.std():.4f}, n={a.size})")
+    else:
+        avg_block = []
 
     lens = batch.seq_len.tolist()
     lens = [lens] if isinstance(lens, int) else lens
@@ -223,6 +226,8 @@ def main():
     else:
         print("TAT CA L1-L4 DAT => chay huan luyen lai."
               if _ok else "CO TIEU CHI KHONG DAT -- khong huan luyen lai.")
+    for _l in avg_block:
+        print(_l)
     print("=" * 86)
 
 
