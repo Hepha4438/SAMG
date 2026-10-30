@@ -3824,3 +3824,68 @@ deu it nhat 10%). Commit `83b183e`.
 Bo sung vao R15b: mot phep kiem khong chi phai xac minh tien de cua no, ma con phai biet **no dang o
 che do nao** -- neu cung mot nguong duoc dung cho hai che do co chieu nguoc nhau thi no se bao dong
 gia o dung luc nguy hiem nhat.
+
+---
+
+## Muc 50 -- Chuan danh gia: tra lai tu bon PDF, va mot chi so KHONG co tien le
+
+### 50.1 Bo chi so cua cac cong trinh truoc
+
+| | Frag2Seq (4.1) | Apo2Mol (Eval) | 3DMolFormer (4.2) |
+|---|---|---|---|
+| Binding | Vina Score (QVina) | **Vina min** (AutoDock Vina, Eberhardt 2021) | Vina Score + Vina Dock (QVina 2) |
+| High Affinity | co | co | -- |
+| QED / SA | co | co | co |
+| logP | -- | co | -- |
+| Lipinski | co | co | -- |
+| Diversity | co | -- | **co y khong bao cao** |
+| Tong hop | Time | -- | Success Rate |
+| So mau/hoc | 100 | -- | 100 (duy nhat) |
+| mean & median | -- | **ca hai** | mean |
+
+### 50.2 Ba quy uoc phai theo, neu khong so khong so sanh duoc
+
+1. **SA.** Ban goc (Ertl & Schuffenhauer 2009) thuoc [1, 10], **THAP la tot**. Cac bai SBDD bao cao
+   ban bien doi `SA = (10 - SA_goc)/9` thuoc [0, 1], **CAO la tot** (3DMolFormer Apx D, theo Guan et
+   al. 2023b). `step7_generate_eval.py` nay tra ve **ca hai**: `SA` (chuan hoa) va `SA_raw` (goc).
+   Da suyt mac bay: bang "so voi tran tren" doi chieu voi `check_assembly_ceiling.py`, file do ghi SA
+   theo **ban goc**; neu khong doi sang `SA_raw` thi se tru hai thang do **nguoc chieu nhau**.
+2. **Lipinski la SO QUY TAC thoa man** (0-5), khong phai bien nhi phan. Nam quy tac theo Apo2Mol
+   Apx A: MW < 500 Da; HBD <= 5; HBA <= 10; logP trong **[-2, 5]**; so lien ket quay duoc <= 10.
+   (Luu y: Apo2Mol con bao cao rieng rang logP "thuan loi" nam trong **[-0.4, 5.6]** theo Ghose et al.
+   1999 -- day la **khoang khac** voi khoang trong quy tac Lipinski. Khong tron hai cai.)
+3. **Bao cao ca mean va median** (Apo2Mol).
+
+**Diversity:** Frag2Seq bao cao (1 - Tanimoto trung binh tung cap trong mot hoc). 3DMolFormer **co y
+khong**, voi lap luan dang chu y: moi chi so da dang hien co deu dua tren **do thi 2D**, trong khi bai
+toan la sinh phan tu **3D** (Apx D). Ta bao cao nhung ghi kem bat dong nay.
+
+### 50.3 Tinh LIEN THONG khong co trong bai nao -- va vi sao
+
+Khong bai nao trong bon bai do "ty le phan tu lien thong". Ly do khac nhau:
+
+- **Sinh theo nguyen tu** (Pocket2Mol, GraphBP) va **khuech tan** (TargetDiff, DiffSBDD, Apo2Mol):
+  lien ket duoc sinh hoac suy ra truc tiep, phan tu lien thong **theo cau truc**. Khong co gi de do.
+- **Frag2Seq**: Dinh ly 3.4 khang dinh chuoi va phan tu 3D tuong ung mot-mot, tuc **gia dinh** tai
+  tao duoc. Bai khong bao cao ty le that bai cua phep tai tao.
+
+Muc 43 cho thay o mot mo hinh **da huan luyen that**, gia dinh do **sai**: 0/29 phan tu lien thong,
+8.41 dummy mo coi. Dinh ly 3.4 dung cho chuoi **chinh xac**; no khong noi gi ve chuoi **du doan**.
+
+Nen "ty le lien thong" la chi so **rieng cua du an**, khong co tien le de cite. Can cu cua no la
+dac tinh du lieu va phep do 43.5-43.6, khong phai mot bai bao. **Phai ghi ro dieu nay khi viet bai**,
+khong duoc trinh bay nhu mot chi so chuan.
+
+### 50.4 S8: mot cho de tu lua minh, da tranh
+
+Khi giai ma kenh lien ket, cam lua chon "GOC" o `t > 0` se khien moi phan tu chi co mot thanh phan,
+tuc **ty le lien thong luon bang 100%**. Do la mot tieu chi **khong the that bai** -- vi pham R5, va
+se bien S8 thanh mot phep do vo nghia.
+
+`decode_links` **van cho phep GOC** o moi vi tri. Mask chi ap cho cac rang buoc **tinh dung dan**:
+cha phai di truoc, va dummy duoc chi phai ton tai va chua bi chiem. Mo hinh duoc phep tra loi
+"day la manh roi", va neu no tra loi nhu vay thi ta phai thay dieu do trong so lieu
+(`n_goc trung binh` duoc in ra rieng).
+
+Them `--assemble geometry` de chay lai duong lap rap cu tren **cung bo mau sinh ra**: chenh lech
+giua hai che do do dung bang phan ma kenh lien ket mang lai, khong lan voi khac biet do lay mau.
