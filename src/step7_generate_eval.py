@@ -1,24 +1,61 @@
 """
-step7_generate_eval.py -- PLAN Rev 20 A2c. THAY THE duong dat pose cua `step7_evaluation.py`
-(hang muc B7; ba loi cua ban cu ghi o Muc 37-pre.2).
+step7_generate_eval.py -- PLAN Rev 21, hang muc S8.
 
-Duong di (moi khau da duoc xac nhan rieng truoc do):
-  model -> chuoi token fragment + 7D  ->  template medoid (fragment_dict)
+Duong di:
+  model -> chuoi token fragment + 7D + KENH LIEN KET (parent / attach_self / attach_parent)
+        -> template medoid (fragment_dict)
         -> nghich dao 37-pre.3 (RMSD = 0,0000, Muc 39.2)
-        -> assemble.py (255/255, 0 dummy mo coi, 100% lien thong, Muc 42)
+        -> assemble_by_channel (Muc 43.7: do thi do TOKEN quyet dinh, khong do hinh hoc)
         -> chi so hoa hoc
 
-Khac ban cu: KHONG ETKDG, KHONG trung binh quaternion, dung FRAME HOC (`pocket_R`/`pocket_t`),
-va KHONG ghep chuoi ky tu SMILES.
+Khac ban Rev 20: lap rap bang kenh lien ket thay vi ghep dummy theo khoang cach. Co `--assemble
+geometry` de chay lai duong cu tren CUNG bo mau, nen chenh lech giua hai che do do dung bang
+phan ma kenh lien ket mang lai.
 
-Hai diem phai ghi ro khi doc ket qua:
-  * QED/SA/logP/Lipinski la mo ta **2D** -> **mu voi chat luong pose** (Muc 41.2). Chung do "mo hinh
-    chon dung fragment nao", KHONG do "dat dung cho khong". Pose chi doc duoc qua Vina / kiem hinh hoc.
-  * Tu vung **khong voi toi 42% phan tu test** (Muc 41.4) -- bao cao kem moi bang ket qua.
+====================================================================================
+CHUAN DANH GIA -- doi chieu cac cong trinh truoc (R16)
+====================================================================================
+Bon bai trong thu muc du an dung cac bo chi so sau:
 
-Do dai chuoi: tu vung **khong co `[EOS]`** (Muc 40.2) nen mo hinh khong the bao "da xong". Tam thoi lay
-do dai tu **phan phoi thuc nghiem so fragment/phan tu cua train** (quy uoc du an, R16 muc 3). Ban sua
-that la them `[EOS]`, can chay lai step0 + huan luyen lai -> Rev 21.
+  Frag2Seq (muc 4.1)   : Vina Score, High Affinity, QED, SA, Lipinski, Diversity, Time.
+                         Vina tinh bang QVina; tinh chat hoa hoc bang RDKit.
+  Apo2Mol  (muc Eval)  : Vina min (AutoDock Vina, Eberhardt et al. 2021), QED, SA, logP,
+                         Lipinski, High Affinity. "All evaluation metrics, except High
+                         Affinity, are reported using both their mean and median values."
+  3DMolFormer (muc 4.2): Vina Score, Vina Dock, QED, SA, Success Rate
+                         (Vina Dock < -8.18 VA QED > 0.25 VA SA > 0.59); 100 phan tu/hoc.
+
+Ba quy uoc phai theo cho dung, neu khong so khong so sanh duoc:
+  1. SA. Ban goc (Ertl & Schuffenhauer 2009) nam trong [1, 10], THAP la tot. Cac bai SBDD
+     bao cao ban bien doi tuyen tinh SA = (10 - SA_goc)/9 thuoc [0, 1], CAO la tot
+     (3DMolFormer, Apx D, theo Guan et al. 2023b). Ham `chem_metrics` duoi day tra ve
+     CA HAI: "SA_raw" (goc) va "SA" (da chuan hoa) -- de khong lan.
+  2. Lipinski la SO QUY TAC thoa man trong nam quy tac, khong phai bien nhi phan. Nam quy
+     tac theo Apo2Mol Apx A: MW < 500; HBD <= 5; HBA <= 10; logP trong [-2, 5];
+     so lien ket quay duoc <= 10.
+  3. Bao cao CA mean VA median (Apo2Mol).
+
+  Diversity: Frag2Seq co bao cao (1 - Tanimoto trung binh tung cap trong mot hoc).
+  3DMolFormer CO Y KHONG bao cao, lap luan rang moi chi so da dang hien co deu dua tren do
+  thi 2D trong khi bai toan la 3D (Apx D). Ta bao cao nhung ghi kem bat dong nay.
+
+**Tinh LIEN THONG khong co trong bai nao.** Voi phuong phap sinh theo nguyen tu hoac khuech
+tan, phan tu lien thong theo cau truc nen khong ai do. Voi Frag2Seq, Dinh ly 3.4 GIA DINH
+chuoi tai tao duoc phan tu -- bai khong do ty le that bai. Muc 43 cho thay o mo hinh da
+huan luyen that, gia dinh do sai (0/29). Nen day la chi so RIENG cua du an, khong co tien
+le de cite; can cu cua no la dac tinh du lieu, khong phai mot bai bao.
+
+Hai dieu phai ghi ro khi doc ket qua:
+  * QED/SA/logP/Lipinski la mo ta **2D** -> **mu voi chat luong pose** (Muc 41.2). Chung do
+    "mo hinh chon dung fragment nao", KHONG do "dat dung cho khong".
+  * Tu vung khong voi toi 42% phan tu test (Muc 41.4) -- bao cao kem moi bang ket qua.
+
+Vina chay RIENG qua `--out-sdf` (can meeko + vina + AutoDockTools). Theo Apo2Mol dung
+Vina min (`mode='minimize'`), theo Frag2Seq dung QVina cho Vina Score.
+
+Do dai chuoi: tu vung **khong co `[EOS]`** (Muc 40.2) nen mo hinh khong the bao "da xong".
+Tam thoi lay do dai tu phan phoi thuc nghiem so fragment/phan tu cua train. Ban sua that la
+them `[EOS]` -> hoan sang Rev 22.
 """
 import os
 import sys
@@ -62,7 +99,10 @@ def chem_metrics(mol, sa_fn):
         (-2 <= logp <= 5),
         rdMolDescriptors.CalcNumRotatableBonds(mol) <= 10,
     ])
-    return {"QED": float(qed(mol)), "SA": float(sa_fn(mol)), "logP": logp, "Lipinski": float(lip)}
+    sa_raw = float(sa_fn(mol))
+    # 3DMolFormer Apx D (theo Guan et al. 2023b): SA = (10 - SA_goc)/9, CAO la tot.
+    return {"QED": float(qed(mol)), "SA": (10.0 - sa_raw) / 9.0, "SA_raw": sa_raw,
+            "logP": logp, "Lipinski": float(lip)}
 
 
 def spherical_to_vec(d, theta, phi):
@@ -104,8 +144,121 @@ def generate_one(model, h_target, target_mask, vocab_size, length, temperature, 
         inp = torch.cat([inp, nxt], dim=1)
     tgt = torch.tensor([toks], dtype=torch.long, device=device)
     inp_final = torch.cat([sos, tgt[:, :-1]], dim=1)
-    _, _, sampled_7d, _, _lk = model.generator(inp_final, h_target, [], target_mask=target_mask, target_ids=tgt)
-    return toks, sampled_7d[0].double().cpu().numpy()
+    _, _, sampled_7d, _, link_logits = model.generator(inp_final, h_target, [],
+                                                       target_mask=target_mask, target_ids=tgt)
+    # S8: link_logits lay tu DUNG forward nay -- cac head lien ket deu doc `geo_in`/`frag_repr`
+    # dung tren target_ids, giong het luc huan luyen (teacher forcing tren token).
+    return toks, sampled_7d[0].double().cpu().numpy(), link_logits
+
+
+def n_dummies(entry):
+    z = np.asarray(entry["atomic_nums"]).reshape(-1)
+    return int((z == 0).sum())
+
+
+def canon_of_ordinal(entry, o):
+    """Nghich dao cua `_ord_in` o step6: thu tu trong so dummy -> chi so CANONICAL."""
+    if o is None:
+        return None
+    z = np.asarray(entry["atomic_nums"]).reshape(-1)
+    dummies = [i for i, zz in enumerate(z) if int(zz) == 0]
+    return int(dummies[o]) if 0 <= o < len(dummies) else None
+
+
+def decode_links(link_logits, n_dum, greedy=True):
+    """S8: giai ma parent / attach_self / attach_parent theo thu tu t, CO MASK.
+
+    Mask ap dung -- deu la rang buoc **tinh dung dan**, khong phai de lam dep so lien thong:
+      * t = 0 bat buoc la GOC.
+      * cha phai la j < t va con it nhat mot dummy chua dung.
+      * attach_self < so dummy cua fragment t.
+      * attach_parent < so dummy cua cha, va dummy do chua bi chiem.
+
+    GOC VAN DUOC PHEP o t > 0. Ligand nhieu thanh phan la co that (kiem K5 da thay), va quan
+    trong hon: cam GOC se lam chi so "lien thong" dat 100% mot cach tam thuong, tuc bien no
+    thanh mot tieu chi khong the that bai -- vi pham R5. Chi so chi co nghia khi mo hinh duoc
+    phep tra loi "day la manh roi".
+    """
+    from step4_ligand_generator import MAX_ATTACH
+    T = len(n_dum)
+    lp = link_logits["parent"][0].double().cpu().numpy()
+    ls = link_logits["attach_self"][0].double().cpu().numpy()
+    la = link_logits["attach_parent"][0].double().cpu().numpy()
+    used = [set() for _ in range(T)]
+    par, a_s, a_p = [], [], []
+
+    def pick(vec, allowed):
+        if not allowed:
+            return None
+        v = np.full(vec.shape, -np.inf)
+        idx = np.asarray(sorted(allowed), dtype=int)
+        v[idx] = vec[idx]
+        if greedy:
+            return int(np.argmax(v))
+        e = np.exp(v - np.max(v))
+        e = e / e.sum()
+        return int(np.random.choice(v.size, p=e))
+
+    for t in range(T):
+        free_self = set(range(min(n_dum[t], MAX_ATTACH))) - used[t]
+        if t == 0 or not free_self:
+            par.append(-1); a_s.append(None); a_p.append(None); continue
+        cand = {0}
+        for j in range(t):
+            if set(range(min(n_dum[j], MAX_ATTACH))) - used[j]:
+                cand.add(j + 1)
+        c = pick(lp[t], cand)
+        if c is None or c == 0:
+            par.append(-1); a_s.append(None); a_p.append(None); continue
+        pj = c - 1
+        free_par = set(range(min(n_dum[pj], MAX_ATTACH))) - used[pj]
+        os_ = pick(ls[t], free_self)
+        op_ = pick(la[t], free_par)
+        if os_ is None or op_ is None:
+            par.append(-1); a_s.append(None); a_p.append(None); continue
+        used[t].add(os_)
+        used[pj].add(op_)
+        par.append(pj); a_s.append(os_); a_p.append(op_)
+    return par, a_s, a_p
+
+
+def build_mol_channel(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t,
+                      link_logits, greedy=True):
+    """S8: do thi phan tu do KENH LIEN KET quyet dinh; hinh hoc chi dat toa do (Muc 43.7)."""
+    from scipy.spatial.transform import Rotation as Rot
+    import assemble as asm
+    entries, place_info = [], []
+    for tid, p7 in zip(toks, poses):
+        smi = inv_vocab.get(tid)
+        e = frag_dict.get(smi)
+        if e is None:
+            raise KeyError(f"token {tid} ({smi!r}) khong co template")
+        d, theta, phi, qw, qx, qy, qz = [float(v) for v in p7]
+        n = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
+        if n < 1e-8:
+            raise ValueError("quaternion suy bien")
+        qw, qx, qy, qz = qw / n, qx / n, qy / n, qz / n
+        center = pocket_R @ spherical_to_vec(d, theta, phi) + pocket_t
+        R_g_to_w = pocket_R @ Rot.from_quat([qx, qy, qz, qw]).as_matrix()
+        entries.append((smi, e))
+        place_info.append((R_g_to_w, center))
+
+    n_dum = [n_dummies(e) for _, e in entries]
+    par, a_s, a_p = decode_links(link_logits, n_dum, greedy=greedy)
+    items = []
+    for k, (smi, e) in enumerate(entries):
+        pj = par[k]
+        items.append({
+            "smiles": smi,
+            "local": np.asarray(e["local"], dtype=np.float64),
+            "z": np.asarray(e["atomic_nums"]).reshape(-1),
+            "parent": pj,
+            "attach_self": canon_of_ordinal(e, a_s[k]),
+            "attach_parent": canon_of_ordinal(entries[pj][1], a_p[k]) if pj >= 0 else None,
+        })
+    mol, diag = asm.assemble_by_channel(items, place_info=place_info)
+    diag["n_goc"] = int(sum(1 for x in par if x < 0))
+    return mol, diag
 
 
 def build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t):
@@ -139,6 +292,11 @@ def main():
                      help="1,0 = lay mau dung phan phoi da hoc. Ban cu hard-code 0,8 khong co can cu.")
     ap.add_argument("--n-pockets", type=int, default=0, help="0 = het split")
     ap.add_argument("--out-sdf", default=None, help="thu muc ghi SDF (de chay Vina rieng)")
+    # S8. "channel" = do thi do kenh lien ket quyet dinh (Rev 21). "geometry" = ghep dummy theo
+    # khoang cach (duong cu, Rev 20) -- giu lai de A/B tren CUNG mot bo mau sinh ra.
+    ap.add_argument("--assemble", choices=["channel", "geometry"], default="channel")
+    ap.add_argument("--link-mode", choices=["greedy", "sample"], default="greedy",
+                     help="greedy = doan tot nhat cua mo hinh ve cau truc; sample = lay mau co mask")
     args = ap.parse_args()
 
     try:
@@ -225,9 +383,14 @@ def main():
             n_gen += 1
             L = int(np.random.choice(lens))
             try:
-                toks, poses = generate_one(model, h_target, target_mask, len(vocab), L,
-                                            args.temperature, device, banned)
-                mol, diag = build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t)
+                toks, poses, link_logits = generate_one(model, h_target, target_mask, len(vocab),
+                                                         L, args.temperature, device, banned)
+                if args.assemble == "channel":
+                    mol, diag = build_mol_channel(toks, poses, inv_vocab, frag_dict,
+                                                   pocket_R, pocket_t, link_logits,
+                                                   greedy=(args.link_mode == "greedy"))
+                else:
+                    mol, diag = build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t)
                 rows.append(chem_metrics(mol, sa_fn))
                 diags.append(diag)
                 if ref_fp is not None:
@@ -246,7 +409,8 @@ def main():
     ok = [r for r in rows if r is not None]
     print("\n" + "=" * 92)
     print(f"SINH MAU -- split={args.split}  hoc={n_pocket}  mau={n_gen}  "
-          f"({args.num_samples}/hoc, temperature={args.temperature})")
+          f"({args.num_samples}/hoc, temperature={args.temperature}, "
+          f"lap rap={args.assemble}, link={args.link_mode})")
     print("=" * 92)
     # Muc 43: "sanitize duoc" KHONG du de goi la phan tu -- mot dam fragment roi rac van sanitize
     # duoc. Validity that phai doi LIEN THONG (1 manh).
@@ -256,27 +420,41 @@ def main():
           f"   <- con so that")
     for k, v in Counter(errs).most_common(5):
         print(f"      loi: {k[:74]:76} x{v}")
-    out = {"split": args.split, "head": head, "ckpt": os.path.basename(ckpt), "n_pocket": n_pocket,
+    out = {"split": args.split, "head": head, "ckpt": os.path.basename(ckpt),
+           "assemble": args.assemble, "link_mode": args.link_mode, "n_pocket": n_pocket,
            "n_gen": n_gen, "validity_sanitize": len(ok) / max(n_gen, 1),
            "validity_connected": n_conn / max(n_gen, 1), "temperature": args.temperature}
     if ok:
         print(f"\n      {'chi so':10}{'mean':>10}{'median':>10}")
-        for k in ["QED", "SA", "logP", "Lipinski"]:
+        for k in ["QED", "SA", "SA_raw", "logP", "Lipinski"]:
             v = np.array([r[k] for r in ok])
             out[f"{k}_mean"], out[f"{k}_median"] = float(v.mean()), float(np.median(v))
             print(f"      {k:10}{v.mean():10.4f}{np.median(v):10.4f}")
+        print("      (SA = ban chuan hoa (10-SA_goc)/9, CAO la tot; SA_raw = ban goc [1,10],"
+              " THAP la tot)")
     if novel_flags:
         out["novelty"] = float(np.mean(novel_flags))
         print(f"\n  Novelty (Tanimoto <= {NOVELTY_TANIMOTO} so voi ligand tham chieu): {out['novelty']:.4f}")
     if diags:
         nm = np.array([x["n_manh"] for x in diags])
-        no = np.array([x["n_dummy_mo_coi"] for x in diags])
         out["lien_thong"] = float((nm == 1).mean())
-        out["dummy_mo_coi_mean"] = float(no.mean())
-        print(f"  Lien thong (1 manh): {(nm == 1).sum()}/{len(nm)} = {(nm == 1).mean():.4f}  |  "
-              f"dummy mo coi trung binh: {no.mean():.2f}")
-        print("      (dummy mo coi cao = cac diem gan KHONG gap nhau => pose sai. Day la chi bao pose"
-              " 2D-free duy nhat ta co truoc khi chay Vina.)")
+        print(f"  Lien thong (1 manh): {(nm == 1).sum()}/{len(nm)} = {(nm == 1).mean():.4f}")
+        if args.assemble == "channel":
+            ng = np.array([x.get("n_goc", 0) for x in diags])
+            nf = np.array([x.get("n_link_that_bai", 0) for x in diags])
+            out["n_goc_mean"] = float(ng.mean())
+            out["link_that_bai_mean"] = float(nf.mean())
+            print(f"      so GOC trung binh: {ng.mean():.2f}  (1 = mot thanh phan; > 1 = mo hinh"
+                  f" CHU DONG tra loi 'manh roi')")
+            print(f"      link that bai trung binh: {nf.mean():.2f}  (dummy duoc chi khong ton tai"
+                  f" hoac da bi chiem -- loi giai ma, khong phai loi pose)")
+            print("      LUU Y: o che do channel, lien thong KHONG con phu thuoc pose (Muc 43.7)."
+                  " Pose sai gio chi lam hinh hoc xau, khong lam dut phan tu.")
+        else:
+            no = np.array([x.get("n_dummy_mo_coi", 0) for x in diags])
+            out["dummy_mo_coi_mean"] = float(no.mean())
+            print(f"      dummy mo coi trung binh: {no.mean():.2f}  (cao = cac diem gan KHONG gap"
+                  f" nhau => pose sai)")
 
     cpath = os.path.join(SAMG_ROOT, "logs", f"assembly_ceiling_{args.split}.json")
     if os.path.exists(cpath) and ok:
@@ -287,14 +465,18 @@ def main():
             print("\n" + "-" * 92)
             print(f"  SO VOI TRAN TREN (gt_template tap chung, {ceil.get('n_common')} complex -- Muc 42.1):")
             print(f"      {'chi so':10}{'mo hinh':>10}{'tran tren':>12}{'lech':>10}")
-            for k in ["QED", "SA", "logP", "Lipinski"]:
-                if f"{k}_mean" in out and f"{k}_mean" in c:
-                    print(f"      {k:10}{out[k + '_mean']:10.4f}{c[k + '_mean']:12.4f}"
-                          f"{out[k + '_mean'] - c[k + '_mean']:+10.4f}")
+            # check_assembly_ceiling.py ghi SA theo ban GOC. O day "SA" da duoc chuan hoa,
+            # nen phai doi chieu bang "SA_raw" -- neu khong se so hai thang do nguoc chieu nhau.
+            for k, kc in [("QED", "QED"), ("SA_raw", "SA"), ("logP", "logP"),
+                          ("Lipinski", "Lipinski")]:
+                if f"{k}_mean" in out and f"{kc}_mean" in c:
+                    print(f"      {k:10}{out[k + '_mean']:10.4f}{c[kc + '_mean']:12.4f}"
+                          f"{out[k + '_mean'] - c[kc + '_mean']:+10.4f}")
             print(f"      LUU Y (Muc 41.2): bon chi so nay la mo ta 2D -- MU voi chat luong pose.")
             print(f"      LUU Y (Muc 41.4): tu vung khong voi toi 42% phan tu test.")
 
-    dst = os.path.join(SAMG_ROOT, "logs", f"generate_eval_{args.split}.json")
+    dst = os.path.join(SAMG_ROOT, "logs",
+                        f"generate_eval_{args.split}_{args.assemble}.json")
     with open(dst, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n[*] da luu {dst}")
