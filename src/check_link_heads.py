@@ -33,7 +33,12 @@ def main():
     # Muc 49: nap trong so tu checkpoint de TACH ba head khi khong co wandb.
     # Khong truyen --ckpt => mo hinh chua hoc, dung cho L1-L4 nhu truoc.
     ap.add_argument("--ckpt", default=None, help="duong dan .ckpt; 'auto' = moi nhat trong checkpoints/")
-    ap.add_argument("--batches", type=int, default=1, help="so batch de lay trung binh")
+    ap.add_argument("--batches", type=int, default=1,
+                     help="so batch de lay trung binh; 0 = TOAN BO split")
+    # Muc 52: loader khong xao, nen N batch dau la mot KHUC LIEN TIEP cua split, khong phai
+    # mau ngau nhien. Day la nguyen nhan 17.35 vs 14.72. Mac dinh xao de tranh bay do.
+    ap.add_argument("--no-shuffle", action="store_true",
+                     help="giu thu tu goc (chi dung khi muon tai lap dung khuc dau)")
     args = ap.parse_args()
     try:
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SAMG_ROOT,
@@ -98,19 +103,23 @@ def main():
     with torch.no_grad():
         total, ld = model.forward(batch)
 
-    if args.batches > 1:
+    if args.batches != 1:
         import numpy as _np
         acc = {}
-        dl = ProteinLigandDataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+        dl = ProteinLigandDataLoader(ds, batch_size=args.batch_size,
+                                      shuffle=not args.no_shuffle, num_workers=0)
+        n_want = args.batches if args.batches > 0 else len(dl)
         with torch.no_grad():
             for i, b in enumerate(dl):
-                if i >= args.batches:
+                if i >= n_want:
                     break
                 _, d_ = model.forward(b.to(device))
                 for k, v in d_.items():
                     acc.setdefault(k, []).append(float(v))
         # In o CUOI output, khong phai o day: dat truoc L1 thi `tail` cat mat (da xay ra 2 lan).
-        avg_block = [f"\n[*] trung binh tren {args.batches} batch (batch_size={args.batch_size}):"]
+        avg_block = [f"\n[*] trung binh tren {min(n_want, len(dl))} batch "
+                     f"(batch_size={args.batch_size}, "
+                     f"{'thu tu goc' if args.no_shuffle else 'da xao'}):"]
         for k in ["loss_parent", "loss_attach_self", "loss_attach_parent", "loss_link",
                   "loss_token", "loss_geo", "loss_total"]:
             if k in acc:
