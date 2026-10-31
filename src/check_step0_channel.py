@@ -27,7 +27,10 @@ SAMG_ROOT = os.path.dirname(CURRENT_DIR)
 sys.path.insert(0, CURRENT_DIR)
 
 REL_TOL = 1e-4
-VOCAB_EXPECTED = 3983
+# Rev 22 (S9): 3983 -> 3984 do them [EOS]. Day la thay doi CO CHU DICH, khong phai ha moc:
+# 3981 fragment + [SOS] + [UNK] + [EOS]. Neu con so nay lech ma khong co thay doi vocab co chu
+# dich thi K7 dang bao dung (vocab doi ngoai y muon => moi checkpoint cu het doi chieu duoc).
+VOCAB_EXPECTED = 3984
 K8_THRESHOLD = 0.99
 EXPECTED_STABLE = {"train": 17200, "valid": 764, "test": 255}
 DIM_NAMES = ["d", "theta", "phi", "qw", "qx", "qy", "qz"]
