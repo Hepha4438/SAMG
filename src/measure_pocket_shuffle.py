@@ -80,6 +80,14 @@ Cach chay (server GPU, dung python -u):
     --loader-shuffle (M10-b, RESEARCH_CONTEXT 27.6): them co nay de chay --split train voi
     shuffle=True (giai nghich ly valid > train -- xem tieu chi M10-b trong plan.md).
 """
+# !!! CANH BAO (Muc 59, Rev 22) -- SCRIPT NAY DANG CU SO VOI DU LIEU.
+# No suy mask pose bang `(target_ids != 0)`. Tu S10 tro di, chuoi muc tieu co THEM MOT vi tri
+# `[EOS]` voi pose RONG (toan 0) va id KHAC 0, nen cach suy do se keo vi tri do vao thong ke.
+# Hieu ung da do duoc o `compute_scaler.py`: moi trung binh bi pha loang dung ty le L/(L+1)
+# = 101791/118991 = 0.855451 tren ca 7 chieu.
+# TRUOC KHI CHAY LAI: thay bang `(target_ids != 0) & (target_ids != vocab["[EOS]"])`,
+# hoac dung `batch.geo_mask`. Dung tin so cua script nay cho den khi da sua.
+
 import os
 import sys
 import glob
