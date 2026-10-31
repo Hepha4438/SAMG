@@ -62,6 +62,7 @@ import sys
 import glob
 import json
 import math
+import re
 import pickle
 import socket
 import argparse
@@ -334,7 +335,23 @@ def main():
         cands = glob.glob(os.path.join(SAMG_ROOT, "saved_checkpoints_flow", "*.ckpt"))
         if not cands:
             raise SystemExit("[!] Khong co checkpoint nao trong saved_checkpoints_flow/. Truyen --ckpt.")
-        ckpt = max(cands, key=os.path.getmtime)
+        # Muc 53: chon theo VAL LOSS THAP NHAT, khong theo mtime. Lay checkpoint moi nhat la
+        # lay epoch cuoi, tuc bo qua hoan toan viec LUA CHON MO HINH tren tap valid -- epoch 24
+        # khong he tot hon epoch 13 (val 14.6493) chi vi no muon hon. `ModelCheckpoint` da ghi
+        # val loss vao ten file nen khong can do lai.
+        scored = []
+        for c in cands:
+            m = re.search(r"val_total_loss=([0-9]+\.[0-9]+)", os.path.basename(c))
+            if m:
+                scored.append((float(m.group(1)), c))
+        if scored:
+            best, ckpt = min(scored)
+            ep = re.search(r"epoch=(\d+)", os.path.basename(ckpt))
+            print(f"[*] chon theo val_total_loss THAP NHAT: {best:.4f}"
+                  f"  (epoch {ep.group(1) if ep else '?'}, trong {len(scored)} checkpoint co diem)")
+        else:
+            ckpt = max(cands, key=os.path.getmtime)
+            print("[*] khong checkpoint nao ghi val_total_loss trong ten -> lay moi nhat theo mtime")
     print(f"[*] checkpoint: {ckpt}")
 
     config = OmegaConf.create({
