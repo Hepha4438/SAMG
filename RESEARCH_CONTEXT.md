@@ -4332,3 +4332,84 @@ lien ket, va gia thuyet con lai (chua kiem) van la hai thu o Muc 55.3:
 
 Muc 2 va 3 nham vao cung mot phan du nen **khong duoc gop** vao mot lan chay: neu gop thi lai khong
 tach duoc nguyen nhan, dung cai bay da tranh duoc o Rev 21.
+
+---
+
+## Muc 57 -- Chan doan "train khong hieu qua": LR va kenh hinh hoc, hai thu khac nhau
+
+Nguoi dung nhan xet lan chay Rev 21 (25 epoch, du lieu day du o `epoch_losses.csv`) khong hieu qua.
+Dung, va so lieu chi ra hai cho khac nhau.
+
+### 57.1 Mo hinh bi GIOI HAN BOI LEARNING RATE -- co bang chung truc tiep
+
+Toc do giam, 5 epoch dau so voi 5 epoch cuoi:
+
+| | dau | cuoi | con |
+|---|---|---|---|
+| Total | -0.4243/epoch | -0.0782 | 18.4% |
+| Token | -0.1720 | -0.0383 | 22.3% |
+| Geo | -0.1127 | -0.0255 | 22.6% |
+| Pocket | -0.0674 | -0.0097 | **14.4%** |
+
+`loss_link` cung gan nhu dung: 1.5703 (ep 0) -> 1.1786 (ep 8) -> 1.1447 (ep 16) -> 1.1092 (ep 24).
+
+Bang chung quyet dinh la **mot buoc nhay don le**:
+
+```
+17->18: -0.0625
+18->19: -0.0540
+19->20: -0.1833   <== gap 3,4 lan nhip xung quanh
+20->21: -0.0558
+```
+
+`ReduceLROnPlateau(factor=0.5, patience=5)` fire dung mot lan o do (LR 1e-4 -> 5e-5) va loss tut ngay
+gap 3,4 lan. Suy ra **truoc epoch 20 mo hinh da bi LR giu lai**. `patience=5` qua thu dong: val giam
+cham nhung **deu**, nen scheduler gan nhu khong bao gio coi la plateau.
+
+Day khong phai suy doan ve "nen giam LR" -- do la mot can thiep da xay ra va da do duoc hieu ung.
+Da doi sang `CosineAnnealingLR(T_max=max_epochs, eta_min=1e-6)` (S13), Loshchilov & Hutter 2017,
+ICLR (arXiv:1608.03983), bien khong restart.
+
+### 57.2 Kenh hinh hoc tac vi ly do KHAC, va cosine se khong vá duoc
+
+`Geo_Loss_Unclamped` 9.7760 -> 8.2742 sau 25 epoch. So voi 9.9326 (NLL cua phan bo bien 7 chieu da
+chuan hoa): gap 1.6584 nat = 0.2369/chieu -> sigma dieu kien = 0.789 x sigma bien ->
+**R^2 tuong duong 0.3774**.
+
+Rev 20 o epoch 18 la 0.3461. Sau ca mot lan chay 25 epoch voi kien truc moi, **R^2 tuong duong chi
+tang +0.031**. Doi chieu tran cua probe tuyen tinh o Muc 43.6 (0.2299) va uoc luong doc lap o Muc
+46.2 -- ba con so van cung noi mot dieu: dieu kien hoa theo tui giai thich duoc khoang mot phan ba
+phuong sai tu the.
+
+Day la van de **bieu dien va kien truc**, khong phai van de toi uu hoa. Cosine se khong vá duoc no;
+no thuoc C4 / 6D rotation, hoan sang Rev 23.
+
+### 57.3 Vi sao GOP `[EOS]` va cosine vao mot lan chay
+
+Thong le cua du an (R5, va bai hoc Rev 21) la khong gop hai thay doi nham vao cung mot phan du. O day
+chung **khong** nham vao cung mot thu, va quan trong hon, hai hieu ung tach duoc **qua hai truc khac
+nhau** thay vi qua hai lan chay 30 gio:
+
+- hieu ung **cosine** doc tren **duong loss**: `Total_Loss` o epoch 24 phai thap hon 13.3360.
+- hieu ung **`[EOS]`** doc tren **lien thong**, va da co du doan dinh luong ghi truoc: 0.646 +/- 0.038
+  (Muc 56.3). Them nua `step7` co co `--no-eos` de chay lai duong Rev 21 tren **cung checkpoint**:
+  neu `--no-eos` cung tang manh thi phan hon den tu cosine, khong tu `[EOS]`.
+
+Tach qua hai truc chi hop le khi moi truc do dung mot thu. Neu `--no-eos` **va** lien thong co `[EOS]`
+cung tang cung mot luong thi phep tach that bai va phai chay rieng.
+
+### 57.4 Rui ro cua S10/S11, va phep kiem E5
+
+`[EOS]` co id khac 0, con `loss_geo` truoc day suy mask tu `(target_ids != 0)` -- dung khi padding la
+id 0 va chuoi khong co `[EOS]`. Neu khong sua, vi tri `[EOS]` (pose **RONG**, toan 0) se duoc tinh
+vao loss hinh hoc. Do la mot loi **im lang**: khong exception, chi la mo hinh hoc dat mot pose vo
+nghia o moi phan tu.
+
+Da thay bang `data.geo_mask` tuong minh (1 o fragment that, 0 o `[EOS]` va padding), noi qua
+`step6.forward` -> `step4` -> `step5`. Duong suy cu duoc giu khi `geo_mask = None` de tuong thich
+nguoc.
+
+`check_eos.py` kiem E1-E6, trong do **E5 la phep kiem khong the pass rong**: no doi so vi tri ma mask
+cu khac mask moi phai bang **dung so phan tu trong batch** (moi phan tu dung mot vi tri `[EOS]`). Neu
+`geo_mask` khong duoc ap thi hai mask bang nhau, `n_khac = 0`, va E5 that bai. Day la bai hoc truc
+tiep tu Muc 8/K1 (scaler cu lam phep kiem pass rong) va tu R15b.
