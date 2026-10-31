@@ -4003,3 +4003,85 @@ nhanh hinh hoc.
 
 Chua phai van de cap bach: `val_total_loss` van phang/giam nhe o epoch 14, chua co dau hieu overfit
 o muc tong.
+
+---
+
+## Muc 53 -- Hai lan chay S8 dau tien VO HIEU: head lien ket la ngau nhien
+
+### 53.1 Loi
+
+`step7_generate_eval.py` chon `samg-opt-epoch=022-val_total_loss=13.2157.ckpt`, va Lightning canh
+bao giua log:
+
+```
+Found keys that are in the model state dict but not in the checkpoint:
+['generator.root_score', 'generator.parent_q.weight', 'generator.parent_q.bias',
+ 'generator.parent_k.weight', 'generator.parent_k.bias', 'generator.attach_self_head.weight',
+ 'generator.attach_self_head.bias', 'generator.attach_parent_head.weight',
+ 'generator.attach_parent_head.bias']
+```
+
+Chin tham so cua ba head lien ket **khong co trong checkpoint** -> ngau nhien. `strict=False` cho qua
+im lang.
+
+**Nguyen nhan: checkpoint do la cua lan chay Rev 20**, kien truc khong co head lien ket.
+
+**Vi sao bo chon lai chon no:** toi vua sua `--ckpt auto` thanh "chon `val_total_loss` thap nhat".
+Nhung Rev 20 **khong co so hang `loss_link`**, nen `val_total_loss` cua no thieu han ~1.2-1.4 so voi
+Rev 21 o cung chat luong:
+
+| | val_total_loss | co loss_link? |
+|---|---|---|
+| Rev 20, epoch 22 | 13.2157 | KHONG |
+| Rev 21, epoch 13 | 14.6493 | CO |
+| chenh | 1.43 | ~= loss_link do duoc (1.2056) |
+
+Chon theo val loss thap nhat thi **luon** chon Rev 20. Bo chon "dung" theo mot nghia lai sai theo
+nghia quan trong hon.
+
+### 53.2 Day la dang loi toi da tu chi ra o Muc 46.1
+
+Muc 46.1: khong duoc so `Token_Loss` giua hai bo tu vung khac nhau, vi tran doan ngau nhien khac nhau.
+Muc 53: khong duoc so `val_total_loss` giua hai kien truc khac nhau, vi **so so hang trong tong khac
+nhau**.
+
+Cung mot nguyen tac -- **hai con so chi so sanh duoc khi dinh nghia cua chung giong nhau** -- va toi
+tai pham no ngay trong doan code viet de tranh mot loi khac. Bo sung vao R15b: khi viet code chon
+"cai tot nhat theo mot chi so", phai hoi chi so do co **cung dinh nghia** tren moi ung vien hay khong.
+
+### 53.3 Da sua
+
+1. `--ckpt auto` **loc theo kien truc truoc**, roi moi so val loss trong so cac checkpoint CO head
+   lien ket. Kiem bang su ton tai cua khoa `generator.root_score` v.v., khong dua vao ten file
+   (ten `samg-opt-*` cua hai lan chay khong phan biet duoc).
+2. **Dung han** (`SystemExit`) neu `--assemble channel` ma checkpoint khong co head lien ket, thay vi
+   im lang do mot mo hinh ngau nhien.
+3. Them `--list-ckpt`: liet ke tung checkpoint kem val loss va co head lien ket hay khong.
+
+### 53.4 Mot dieu dang gia van con lai: SAN
+
+Hai lan chay tren deu dung head lien ket **ngau nhien**. Nhung chung khong vo ich hoan toan -- chung
+do mot cai **san**:
+
+| | channel (head NGAU NHIEN) | geometry |
+|---|---|---|
+| Validity (sanitize) | 1189/1275 = 0.9325 | 701/1275 = 0.5498 |
+| **Lien thong** | **101/1275 = 0.0792** | **3/1275 = 0.0024** |
+| so GOC trung binh | 3.19 | -- |
+| dummy mo coi | -- | 6.47 |
+
+Voi head **ngau nhien**, channel da hon geometry **33 lan** ve lien thong va gan **gap doi** ve
+sanitize. Phan hon do **khong** den tu mo hinh hoc duoc gi, ma tu **masking** trong `decode_links`:
+diem gan bat buoc phai ton tai va chua bi chiem. Tuc ngay ca mot bo lien ket ngau nhien nhung HOP LE
+cung tot hon suy lien ket tu hinh hoc sai.
+
+`link that bai trung binh = 0.00` xac nhan masking hoat dong: khong lan nao chi vao dummy khong ton
+tai.
+
+`so GOC trung binh = 3.19` la dau hieu cua head ngau nhien: parent gan nhu dong deu nen nhieu fragment
+roi vao "goc". Voi head da hoc (perplexity parent **1.087**, Muc 52.2) con so nay phai gan 1.
+
+**Du doan truoc khi do** (ghi lai de phep do sau co the lam that bai no, R5): voi head da huan luyen,
+`so GOC trung binh` se giam ve khoang 1,0-1,5 va ty le lien thong se vuot **0,50**. Neu no van duoi
+0,20 thi gia thuyet "kenh lien ket du de cuu tinh lien thong" (huong b, Muc 43.7) **sai**, va phai
+tim nguyen nhan khac.

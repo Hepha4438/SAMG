@@ -296,6 +296,8 @@ def main():
     # S8. "channel" = do thi do kenh lien ket quyet dinh (Rev 21). "geometry" = ghep dummy theo
     # khoang cach (duong cu, Rev 20) -- giu lai de A/B tren CUNG mot bo mau sinh ra.
     ap.add_argument("--assemble", choices=["channel", "geometry"], default="channel")
+    ap.add_argument("--list-ckpt", action="store_true",
+                     help="liet ke checkpoint kem val loss va co head lien ket hay khong, roi thoat")
     ap.add_argument("--link-mode", choices=["greedy", "sample"], default="greedy",
                      help="greedy = doan tot nhat cua mo hinh ve cau truc; sample = lay mau co mask")
     args = ap.parse_args()
@@ -330,29 +332,55 @@ def main():
     pos_scale = scale_factors.flatten()[0].item()
     print(f"[*] vocab {len(vocab)}  |  fragment_dict {len(frag_dict)} SMILES")
 
+    # Muc 53: chin tham so cua ba head lien ket. Checkpoint cua Rev 20 KHONG co chung.
+    LINK_KEYS = ["generator.root_score", "generator.parent_q.weight", "generator.parent_k.weight",
+                 "generator.attach_self_head.weight", "generator.attach_parent_head.weight"]
+
+    def has_link_heads(path):
+        d = torch.load(path, map_location="cpu")
+        sd = d.get("state_dict", d)
+        return all(k in sd for k in LINK_KEYS)
+
+    def ckpt_score(path):
+        m = re.search(r"val_total_loss=([0-9]+\.[0-9]+)", os.path.basename(path))
+        return float(m.group(1)) if m else None
+
+    cands = sorted(glob.glob(os.path.join(SAMG_ROOT, "saved_checkpoints_flow", "*.ckpt")))
+    if args.list_ckpt:
+        print(f"\n{'file':52}{'val':>10}  link_heads")
+        for c in cands:
+            sc = ckpt_score(c)
+            print(f"{os.path.basename(c)[:50]:52}"
+                  f"{('%.4f' % sc) if sc is not None else '-':>10}  "
+                  f"{'CO' if has_link_heads(c) else 'KHONG (Rev 20)'}")
+        print("\nval_total_loss cua Rev 20 va Rev 21 KHONG so sanh duoc: Rev 21 co thêm loss_link.")
+        return
+
     ckpt = args.ckpt
     if ckpt is None:
-        cands = glob.glob(os.path.join(SAMG_ROOT, "saved_checkpoints_flow", "*.ckpt"))
         if not cands:
             raise SystemExit("[!] Khong co checkpoint nao trong saved_checkpoints_flow/. Truyen --ckpt.")
-        # Muc 53: chon theo VAL LOSS THAP NHAT, khong theo mtime. Lay checkpoint moi nhat la
-        # lay epoch cuoi, tuc bo qua hoan toan viec LUA CHON MO HINH tren tap valid -- epoch 24
-        # khong he tot hon epoch 13 (val 14.6493) chi vi no muon hon. `ModelCheckpoint` da ghi
-        # val loss vao ten file nen khong can do lai.
-        scored = []
-        for c in cands:
-            m = re.search(r"val_total_loss=([0-9]+\.[0-9]+)", os.path.basename(c))
-            if m:
-                scored.append((float(m.group(1)), c))
-        if scored:
-            best, ckpt = min(scored)
-            ep = re.search(r"epoch=(\d+)", os.path.basename(ckpt))
-            print(f"[*] chon theo val_total_loss THAP NHAT: {best:.4f}"
-                  f"  (epoch {ep.group(1) if ep else '?'}, trong {len(scored)} checkpoint co diem)")
-        else:
-            ckpt = max(cands, key=os.path.getmtime)
-            print("[*] khong checkpoint nao ghi val_total_loss trong ten -> lay moi nhat theo mtime")
+        # LOC THEO KIEN TRUC TRUOC, roi moi so val loss. Khong duoc so val_total_loss giua Rev 20
+        # va Rev 21: Rev 21 co them so hang loss_link (~1.2-1.4) nen tong cua no luon CAO hon o
+        # cung chat luong. So truc tiep se luon chon Rev 20 -- dung loi da mac va da ghi o Muc 53.
+        scored = sorted([(sc, c) for c in cands if (sc := ckpt_score(c)) is not None])
+        ckpt = None
+        for sc, c in scored:
+            if has_link_heads(c):
+                ep = re.search(r"epoch=(\d+)", os.path.basename(c))
+                print(f"[*] chon theo val_total_loss thap nhat TRONG SO checkpoint CO head lien ket:"
+                      f" {sc:.4f} (epoch {ep.group(1) if ep else '?'})")
+                ckpt = c
+                break
+        if ckpt is None:
+            raise SystemExit("[!] Khong checkpoint nao vua co diem val vua co head lien ket. "
+                             "Chay --list-ckpt de xem, hoac truyen --ckpt truc tiep.")
     print(f"[*] checkpoint: {ckpt}")
+    # R15b: xac minh TIEN DE cua phep do -- neu head lien ket la ngau nhien thi moi so lieu
+    # ve tinh lien thong deu vo nghia, va `strict=False` se im lang cho qua.
+    if args.assemble == "channel" and not has_link_heads(ckpt):
+        raise SystemExit("[!] Checkpoint nay KHONG co head lien ket (co le cua Rev 20). "
+                         "Che do --assemble channel se do mot mo hinh NGAU NHIEN. Dung lai.")
 
     config = OmegaConf.create({
         "hidden_dim": 256, "num_heads": 4, "lr": 1e-4, "ligand_mode": "empty", "geo_head": "maf",
