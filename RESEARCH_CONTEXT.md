@@ -4588,3 +4588,76 @@ huan luyen. Chay lai `check_eos.py` (khoang 1 phut, CPU) de co moc dung.
 `build_fragment_dict.py` doc `local_coords` tu pkl trong **frame fragment** va khong nap scaler, nen
 scaler sai khong anh huong. Ket qua cua no da chay tren dung ban step0 moi: 3981 SMILES,
 do phu token valid 0.9505, do phu tu vung 1.0000.
+
+---
+
+## Muc 61 -- Hai epoch dau Rev 22. Va `Total_Loss` KHONG dung lam moc so sanh duoc
+
+| | ep 0 | ep 1 |
+|---|---|---|
+| Total | 16.5246 | 15.1945 |
+| Token | 3.5966 | 2.9888 |
+| Geo (clamped) | 7.9706 | 7.7423 |
+| Pocket | 3.4410 | 3.1890 |
+| Geo_Unclamped | 9.7943 | 9.4565 |
+| **Parent** | **0.1960** | **0.0788** |
+| AttachSelf | 0.5686 | 0.4982 |
+| AttachParent | 0.7517 | 0.6974 |
+
+CSV gio co 10 cot (ban sua `1cb042d` da an) va **tong tu nhat quan**: cong bay thanh phan ra dung
+`Total_Loss` den 1e-4 ⇒ `lambda_link = 1.0` va khong co so hang an nao.
+
+### 61.1 Ba head lien ket: hoc nhanh hon Rev 21 mot chut
+
+| | Rev 22 | Rev 21 | lech |
+|---|---|---|---|
+| link ep 0 | 1.5163 | 1.5703 | -0.0540 |
+| link ep 1 | 1.2744 | 1.3131 | -0.0387 |
+
+`Parent_Loss = 0.0788` ngay o epoch 1, so voi khoi tao ~1.021 -- giam 92% trong hai epoch. (Khong
+so truc tiep voi 0.0835 cua Muc 52.2: do la tren **valid** o epoch 22, day la tren **train** o
+epoch 1.)
+
+Ba cot nay **so sanh duoc** giua hai lan chay: `ignore_index=-100` loai vi tri `[EOS]`, nen mau so
+van la so fragment, khong doi.
+
+### 61.2 `Token_Loss` va `Total_Loss` KHONG so sanh duoc voi Rev 21
+
+`loss_token` dung `ignore_index=0`, va `[EOS]` co id 3983 != 0, nen no **duoc tinh vao**. Mau so vi
+vay doi tu `L` sang `L+1`:
+
+| | Rev 21 | Rev 22 |
+|---|---|---|
+| so vi tri trung binh | 5.918 | 6.918 |
+| Token_Loss ep 0 | 3.8590 | 3.5966 |
+| tong CE moi phan tu | 22.838 | 24.882 |
+
+Token_Loss **thap hon** nhung tong CE moi phan tu lai **cao hon**. Neu CE tren cac fragment khong
+doi thi CE o vi tri `[EOS]` khoang **2.04 nat** -- tuc viec doan "khi nao dung" la mot bai toan that,
+khong phai mot vi tri de. Va vi `Total = tong bay thanh phan`, `Total_Loss` thua ke dung khiem khuyet
+do.
+
+Day la **lan thu ba** cung mot nguyen tac: Muc 46.1 (Token_Loss qua hai vocab), Muc 53.2
+(`val_total_loss` qua hai kien truc), nay la Token/Total qua hai **mau so**. Toi da tu viet du doan
+"Total_Loss epoch 24 thap hon 13.2" vao `plan.md` -- mot phep so sanh **khong hop le**, ngay sau khi
+ghi hai muc kia. Da bo cot do khoi bang du doan.
+
+### 61.3 Cot nao dung de doc tac dung cua cosine
+
+Mau so khong doi, nen so sanh duoc:
+
+| | Rev 22 ep 0 | Rev 21 ep 0 | | Rev 22 ep 1 | Rev 21 ep 1 |
+|---|---|---|---|---|---|
+| Geo_Unclamped | 9.7943 | 9.7760 (+0.018) | | 9.4565 | 9.4305 (+0.026) |
+| Pocket | 3.4410 | 3.5362 (-0.095) | | 3.1890 | 3.3771 (-0.188) |
+
+**Nhung khong duoc quy hai lech nay cho cosine.** O epoch 0-1, LR cua cosine ~1e-4, **dung bang** LR
+hang so cua Rev 21 (Rev 21 chi giam LR o epoch 20). Nen cosine **chua co tac dung nao** o day; moi
+khac biet hien tai den tu `[EOS]` lam doi dong gradient qua than chung, hoac tu nhieu giua hai lan
+chay.
+
+Tac dung cua cosine chi doc duoc o **cac epoch cuoi**, va theo huong: cosine ha LR **thap hon** Rev 21
+o giua chang, nen co the cham hon o giua nhung hoi tu tot hon o cuoi. Du doan da sua trong `plan.md`:
+
+- `Geo_Loss_Unclamped` epoch 24 < **8.20** (Rev 21: 8.2742)
+- `Pocket_Loss` epoch 24 < **2.95** (Rev 21: 3.0052)

@@ -1933,7 +1933,9 @@ done
 | lien thong (co `[EOS]`) | 0.5193 | **0.62 - 0.70** | duoi 0.56 => `[EOS]` khong mang lai nhu Muc 56.3 tinh |
 | lien thong (`--no-eos`) | 0.5193 | ~0.52, khong doi dang ke | neu TANG nhieu => phan hon den tu LR, khong tu `[EOS]` |
 | `eos_rate` | -- | > 0.95 | thap => mo hinh khong hoc duoc khi nao dung |
-| Total_Loss epoch 24 | 13.3360 | **thap hon 13.2** | khong thap hon => cosine khong giup |
+| ~~Total_Loss epoch 24~~ | ~~13.3360~~ | **BO -- xem Muc 61** | mau so cua Token da doi, Total khong so sanh duoc |
+| `Geo_Loss_Unclamped` ep 24 | 8.2742 | **thap hon 8.20** | khong thap hon => cosine khong giup |
+| `Pocket_Loss` ep 24 | 3.0052 | **thap hon 2.95** | -- |
 | so GOC trung binh | 1.57 | 1.2 - 1.4 | -- |
 
 Hai cot `--no-eos` va `Total_Loss` la cach tach hai nguyen nhan **qua hai truc khac nhau** thay vi
