@@ -1874,3 +1874,78 @@ Ket qua ghi vao **Muc 45**.
 `C4` (bo `v_context.detach()`), **6D rotation** (Zhou et al. 2019 — WORKING_RULES G5b), `[EOS]`,
 sinh bang ky vong thay vi lay mau. Ca bon deu co can cu, nhung gop vao thi khong doc duoc nguyen nhan.
 Quyet o Rev 22 sau khi co so cua Rev 21.
+
+---
+
+# PLAN Rev 22 -- `[EOS]` + cosine annealing
+
+Can cu: Muc 56 (phan dinh `DELTA = L - L_true` la bien quyet dinh cua do dut) va Muc 57 (buoc nhay
+LR o epoch 19->20). Hai thay doi nay duoc GOP vao mot lan chay, voi ly do o Muc 57.3.
+
+## Da lam
+
+| | viec | tep | commit |
+|---|---|---|---|
+| S9 | `[EOS]` vao CUOI `global_vocab` (khong dich id fragment) | `step0_data_prep.py` | `aabbbde` |
+| S10 | chuoi muc tieu ket thuc bang `[EOS]`; `seq_len = L+1`; link = -100 o EOS; them `data.geo_mask` | `step6_trainer.py` | `27455d2` |
+| S11 | `geo_mask` tuong minh thay cho `(target_ids != 0)` | `step4`, `step5` | `899be79`, `e45fe53` |
+| S12 | sinh den `[EOS]` thay vi rut tham do dai; `--no-eos` de A/B; bao cao `eos_rate` | `step7_generate_eval.py` | `4e6adf7` |
+| S13 | `CosineAnnealingLR(T_max=max_epochs, eta_min=1e-6)` | `step6_trainer.py` | `974e647` |
+| -- | `check_eos.py`: E1-E6 | moi | `3f0701e` |
+
+## Thu tu chay (KHONG duoc dao)
+
+```bash
+cd $SAMG && conda activate samg
+
+# 1. Don (bay gio, truoc khi sinh du lieu moi)
+rm -f logs/*.log logs/*.csv logs/*.json logs/error_reports.txt
+rm -rf saved_checkpoints_flow wandb
+
+# 2. step0 -- sinh lai pkl + vocab CO [EOS]
+python -u src/step0_data_prep.py 2>&1 | tee logs/m40_step0_eos.log
+
+# 3. Scaler va fragment_dict PHAI rebuild sau step0.
+#    Muc 8/R15b: scaler cu da ton tai qua nhieu lan step0 va lam K1 pass RONG.
+python -u src/compute_scaler.py        2>&1 | tee logs/m40_scaler.log
+python -u src/build_fragment_dict.py   2>&1 | tee logs/m40_fragdict.log
+
+# 4. Kiem TRUOC khi train. Chi khi E1-E6 DAT moi di tiep.
+CUDA_VISIBLE_DEVICES="" python -u src/check_eos.py --split valid 2>&1 | tee logs/m40_check_eos.log
+CUDA_VISIBLE_DEVICES="" python -u src/check_link_heads.py --split valid --batches 0 \
+    2>&1 | tee logs/m40_link_heads.log
+
+# 5. Train
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 nohup python -u src/step6_trainer.py \
+    --geo-head maf --batch-size 8 --max-epochs 25 > logs/m41_train_eos.log 2>&1 &
+
+# 6. Danh gia, ca hai duong de tach `[EOS]` khoi phan con lai
+for M in "" "--no-eos"; do
+  python -u src/step7_generate_eval.py --split test --num-samples 5 --assemble channel $M \
+      2>&1 | tee "logs/m42_gen${M:+_noeos}.log"
+done
+```
+
+## Du doan ghi TRUOC khi do (R5)
+
+| dai luong | Rev 21 | du doan Rev 22 | neu sai thi sao |
+|---|---|---|---|
+| lien thong (co `[EOS]`) | 0.5193 | **0.62 - 0.70** | duoi 0.56 => `[EOS]` khong mang lai nhu Muc 56.3 tinh |
+| lien thong (`--no-eos`) | 0.5193 | ~0.52, khong doi dang ke | neu TANG nhieu => phan hon den tu LR, khong tu `[EOS]` |
+| `eos_rate` | -- | > 0.95 | thap => mo hinh khong hoc duoc khi nao dung |
+| Total_Loss epoch 24 | 13.3360 | **thap hon 13.2** | khong thap hon => cosine khong giup |
+| so GOC trung binh | 1.57 | 1.2 - 1.4 | -- |
+
+Hai cot `--no-eos` va `Total_Loss` la cach tach hai nguyen nhan **qua hai truc khac nhau** thay vi
+qua hai lan chay 30 gio.
+
+## Hoan sang Rev 23 (co y KHONG gop)
+
+Hai muc duoi cung nham vao **phan du 35,4% bi dut o dung do dai** (Muc 56.3), nen gop chung lai
+se khong tach duoc nguyen nhan:
+1. cho ba head lien ket **thay do thi dang dung** (dummy nao da bi chiem) -- khiem khuyet kien truc
+   ghi o Muc 55.3;
+2. giam **exposure bias** (scheduled sampling).
+
+Va hai muc nham vao **pose**, khong nham vao lien thong: C4 (`v_context.detach()`), 6D rotation
+(Zhou et al. 2019). Kenh hinh hoc moi chi dat R^2 tuong duong 0.377 sau 25 epoch (Muc 57.2).
