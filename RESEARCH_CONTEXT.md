@@ -4085,3 +4085,87 @@ roi vao "goc". Voi head da hoc (perplexity parent **1.087**, Muc 52.2) con so na
 `so GOC trung binh` se giam ve khoang 1,0-1,5 va ty le lien thong se vuot **0,50**. Neu no van duoi
 0,20 thi gia thuyet "kenh lien ket du de cuu tinh lien thong" (huong b, Muc 43.7) **sai**, va phai
 tim nguyen nhan khac.
+
+---
+
+## Muc 54 -- KET QUA S8: tinh lien thong tu 0/29 len 645/1275. Huong (b) DUNG
+
+Checkpoint `samg-opt-epoch=022-val_total_loss=14.4069` (Rev 21, da xac minh co head lien ket bang
+`--list-ckpt`). Test split, 255 hoc, 5 mau/hoc = 1275 mau, temperature 1.0, link greedy.
+
+### 54.1 Bang ket qua
+
+| | channel, head DA HOC | channel, head NGAU NHIEN | geometry (Rev 20) |
+|---|---|---|---|
+| Validity (sanitize) | **1244/1275 = 0.9757** | 0.9325 | 781/1275 = 0.6125 |
+| **Lien thong / tong sinh** | **645/1275 = 0.5059** | 0.0792 | 7/1275 = 0.0055 |
+| Lien thong / sanitize duoc | 645/1244 = 0.5185 | 0.0849 | 7/781 = 0.0090 |
+| so GOC trung binh | **1.57** | 3.19 | -- |
+| link that bai | 0.00 | 0.00 | -- |
+| dummy mo coi | -- | -- | 7.88 |
+| QED | 0.4623 | 0.3611 | 0.4592 |
+| SA_raw | 3.3531 | 3.6889 | 3.6449 |
+| logP | 0.8699 | 3.0333 | 1.4856 |
+| Lipinski | 4.3633 | 3.9176 | 4.6287 |
+| Novelty | 0.9895 | 1.0000 | 1.0000 |
+
+**Moc cu (Muc 43): 0/29 = 0.0000.** Nay 0.5059.
+
+### 54.2 Du doan o Muc 53.4: dung phan quyet dinh, lech phan phu
+
+Du doan ghi TRUOC khi do:
+- "ty le lien thong se vuot 0,50" -> **0.5059. DUNG** (sat nguong, nhung dung).
+- "`so GOC trung binh` giam ve khoang 1,0-1,5" -> **1.57. LECH**, cao hon bien tren.
+
+Phan du doan sai khong lon nhung phai ghi: toi da lac quan ve so GOC. Nguong 0.20 ("neu duoi thi
+huong (b) sai") khong he bi cham.
+
+Huong (b) cua Muc 43.7 -- them kenh lien ket tuong minh -- **duoc xac nhan**. Va co che dung nhu
+43.7 noi: `link that bai = 0.00` o moi mau, tuc **khong lan nao** phep gan that bai vi hinh hoc;
+moi truong hop dut con lai la do **mo hinh chu dong chon GOC**, khong phai do pose sai.
+
+### 54.3 Phan tach cong lao: masking va viec hoc dong gop rieng
+
+So sanh ba cot cho tach duoc hai nguon:
+- **masking** (channel voi head ngau nhien so voi geometry): 0.0055 -> 0.0792, **gap 14 lan**. Chi
+  nho buoc diem gan phai ton tai va chua bi chiem.
+- **viec hoc** (head ngau nhien -> head da hoc): 0.0792 -> 0.5059, **gap 6,4 lan**.
+
+Ca hai deu can. Mot bo lien ket ngau nhien nhung hop le da tot hon nhieu so voi suy lien ket tu hinh
+hoc sai -- nhung chi masking thi khong du.
+
+### 54.4 Gia thuyet cho phan 49% con dut: L ngau nhien + khong co [EOS]
+
+`link that bai = 0.00` loai tru nguyen nhan hinh hoc. Vay 49% dut deu do mo hinh chon GOC.
+
+Mot nguyen nhan co san va **chua tung duoc do**: vocab khong co `[EOS]` (Muc 40.2), nen do dai chuoi
+`L` duoc **lay ngau nhien** tu phan phoi thuc nghiem cua train (mean 5.92, median 5, max 23). Mo hinh
+bi dua mot chuoi dai bang L ma no khong chon. Neu L dai hon muc nay, cac fragment thua **khong con
+dummy tu do nao de gan** -- `decode_links` khi do buoc chung thanh GOC (`if not free_self`).
+
+Neu gia thuyet nay dung thi ty le lien thong phai **giam manh theo L**, va `so GOC trung binh` phai
+**tang theo L**. Da them phep do do vao `step7_generate_eval.py`: bang lien thong theo khoang L cung
+tuong quan Pearson(L, lien thong).
+
+**Du doan truoc khi do (R5):** tuong quan se am va manh (r < -0.35), va o khoang L = 2-3 ty le lien
+thong se tren 0,80 trong khi o L >= 11 se duoi 0,15. Neu tuong quan yeu (|r| < 0.15) thi gia thuyet
+nay **sai** va nguyen nhan nam o cho khac -- khi do khong duoc dem `[EOS]` ra vá.
+
+### 54.5 CANH BAO ve bang chi so hoa hoc: hieu ung chon loc
+
+Khong duoc doc truc tiep QED/SA/logP/Lipinski giua ba cot. Ty le sanitize rat khac nhau (0.9757 so
+voi 0.6125), nen cac phan tu "song sot" cua cot geometry la mot **tap con co thien lech** -- chi
+39% bi loai, va nhung cai bi loai gan chac la cac phan tu phuc tap hon. Lipinski cua geometry
+(4.6287) **cao hon** channel (4.3633) rat co the la hien tuong nay, khong phai geometry sinh phan tu
+giong thuoc hon.
+
+So sanh dung dan duy nhat trong bang la **lien thong** va **validity**, vi chung tinh tren cung mau
+so 1275. Moi chi so hoa hoc chi so sanh duoc trong cung mot che do, hoac sau khi loc ve cung tap
+phan tu.
+
+Rieng trong cot channel, so voi tran tren `gt_template` (146 complex, Muc 42.1): QED -0.0960,
+SA_raw +0.5454, logP -0.5273, Lipinski -0.2051. Head da hoc gan tran hon han head ngau nhien
+(QED -0.1973, logP +1.6362).
+
+Novelty 0.9895 (truoc la 1.0000): khoang 1% phan tu sinh ra co Tanimoto > 0.4 voi ligand tham chieu.
+**Khong ket luan gi tu con so nay** -- 13/1244 mau, chua kiem duoc khac 0 co y nghia hay khong.

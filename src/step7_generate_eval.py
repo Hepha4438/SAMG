@@ -437,6 +437,7 @@ def main():
                 else:
                     mol, diag = build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t)
                 rows.append(chem_metrics(mol, sa_fn))
+                diag["L"] = int(L)          # Muc 54.4: de kiem gia thuyet "L ngau nhien gay dut"
                 diags.append(diag)
                 if ref_fp is not None:
                     fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, 2048)
@@ -495,6 +496,23 @@ def main():
                   f" hoac da bi chiem -- loi giai ma, khong phai loi pose)")
             print("      LUU Y: o che do channel, lien thong KHONG con phu thuoc pose (Muc 43.7)."
                   " Pose sai gio chi lam hinh hoc xau, khong lam dut phan tu.")
+            # Muc 54.4: do dai L duoc lay NGAU NHIEN tu phan phoi train vi vocab chua co [EOS].
+            # Neu L dai hon muc mo hinh "muon" thi fragment thua khong con cho gan -> buoc thanh
+            # GOC -> dut. Phep do nay noi ro dieu do co phai nguyen nhan chinh hay khong.
+            Ls = np.array([x.get("L", 0) for x in diags])
+            if Ls.size and Ls.max() > Ls.min():
+                print(f"\n      lien thong theo do dai chuoi L (median train = 5):")
+                print(f"      {'L':>8}{'n':>7}{'lien thong':>12}{'GOC tb':>9}")
+                edges = [(2, 3), (4, 5), (6, 7), (8, 10), (11, 14), (15, 99)]
+                for lo, hi in edges:
+                    m = (Ls >= lo) & (Ls <= hi)
+                    if m.sum() == 0:
+                        continue
+                    print(f"      {f'{lo}-{hi}':>8}{int(m.sum()):7d}"
+                          f"{float((nm[m] == 1).mean()):12.4f}{float(ng[m].mean()):9.2f}")
+                r = np.corrcoef(Ls, (nm == 1).astype(float))[0, 1]
+                out["corr_L_lienthong"] = float(r)
+                print(f"      tuong quan Pearson(L, lien thong) = {r:+.4f}")
         else:
             no = np.array([x.get("n_dummy_mo_coi", 0) for x in diags])
             out["dummy_mo_coi_mean"] = float(no.mean())
