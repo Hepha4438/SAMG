@@ -436,7 +436,15 @@ class SAMGDataPreprocessor:
                 # Dinh dang pkl da doi (P1c): dict {"frame_stable", "frame_diag", "sequence"}
                 for item in pickle.load(f)["sequence"]:
                     if item["smiles"] not in vocab: vocab[item["smiles"]] = len(vocab)
-                        
+
+        # S9 (Rev 22): them [EOS] o CUOI, khong phai canh [SOS]/[UNK]. Dat o dau se dich id cua MOI
+        # fragment di 1, lam moi checkpoint/chan doan cu khong con doi chieu duoc; dat o cuoi thi id
+        # fragment giu nguyen va chi them mot lop.
+        # Can cu: vocab khong co [EOS] nen mo hinh khong the bao "da xong", buoc step7 phai lay do
+        # dai NGAU NHIEN tu phan phoi train. Muc 56.1 do duoc day la bien quyet dinh cua do dut:
+        # Pearson(L - L_true, lien thong) = -0.3834 trong khi Pearson(L_true, ·) = +0.0365.
+        vocab["[EOS]"] = len(vocab)
+
         with open(os.path.join(self.out_dir, "global_vocab.pkl"), "wb") as f: pickle.dump(vocab, f)
         print(f"[v] Global vocabulary saved. Total Unique Tokens: {len(vocab)}")
         return vocab
