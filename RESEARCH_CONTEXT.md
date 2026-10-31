@@ -4413,3 +4413,67 @@ nguoc.
 cu khac mask moi phai bang **dung so phan tu trong batch** (moi phan tu dung mot vi tri `[EOS]`). Neu
 `geo_mask` khong duoc ap thi hai mask bang nhau, `n_khac = 0`, va E5 that bai. Day la bai hoc truc
 tiep tu Muc 8/K1 (scaler cu lam phep kiem pass rong) va tu R15b.
+
+---
+
+## Muc 58 -- E1-E6 DAT. Nhung scaler doi gia tri, va toi chua giai thich duoc het
+
+### 58.1 E1-E6 deu dat, voi vai cho khop cheo dep
+
+| | ket qua |
+|---|---|
+| E1 | `|vocab| = 3984`, `[EOS] = 3983` (o cuoi, khong dich id fragment) |
+| E2 | 0/8 vi pham. `lens = [5,5,4,6,10,6,4,8]` |
+| E3 | 0/8 vi pham |
+| E4 | 0/8 vi pham |
+| E5 | `n_khac = 8` = dung so phan tu; `sum(mask cu) = 48`, `sum(geo_mask) = 40` |
+| E6 | `CosineAnnealingLR`, LR 1.000e-4 -> 1.390e-6, giam don dieu |
+
+Ba cho khop cheo dang tin:
+- `lens` moi la `[4,4,3,5,9,5,3,7] + 1` -- dung batch do o Rev 21 (cung split, cung `shuffle=False`).
+- `sum(geo_mask) = 40` dung bang "token that: 40" ma L3 cua Rev 21 dem duoc.
+- `48 - 40 = 8` = so phan tu, tuc dung mot vi tri `[EOS]` moi phan tu.
+- `loss_parent = 1.0138` so voi ky vong 1.0210 (Muc 47.1) -- lech 0,7%, khop voi 1.0153 cua Rev 21.
+- `loss_token = 8.4101` so voi `ln(3984) = 8.2900`.
+
+(`UserWarning: lr_scheduler.step() before optimizer.step()` chi la hien vat cua `check_eos.py`: no
+step scheduler ma khong step optimizer de ve duong LR. Luc huan luyen that Lightning goi dung thu tu.)
+
+### 58.2 Scaler doi gia tri, va day la dieu CHUA giai thich duoc
+
+| chieu `d` | shift | scale |
+|---|---|---|
+| gia tri trich o Muc 43.4 | 5.161 | 2.478 |
+| **scaler vua tinh lai** | **4.4153** | **2.9237** |
+
+Kiem bang git: tu commit `bbe4ae8` (luc khoi dong lan train Rev 21) den nay,
+`step0_data_prep.py` **chi doi 9 dong**, toan bo nam trong `build_global_vocab` (them mot khoa
+`[EOS]`), va `compute_scaler.py` **khong doi dong nao**. Nen du lieu 7D **khong the** doi do S9.
+
+Hai cach doc, chua phan dinh duoc:
+
+**(a) Con so 5.161/2.478 thuoc the he du lieu Rev 20, khong phai Rev 21.** Muc 43.4 duoc viet TRUOC
+khi step0 duoc chay lai cho Rev 21. Giua hai lan do co ban sua A1b: step0 bat dau tu ghi
+`pocket_R`/`pocket_t` thay vi dung ban do script di tru ghi. `d`, `theta`, `phi` deu duoc tinh TRONG
+frame tui, nen doi frame la doi `d`. Neu vay thi scaler Rev 21 da la ~4.4153/2.9237 roi -- toi chi
+chua tung thay no in ra -- va **moi thu hien tai nhat quan**.
+
+**(b) Scaler dung trong lan train Rev 21 la ban CU.** Neu vay thi muc tieu da chuan hoa khi do co
+`mean = (4.4153 - 5.161)/2.478 = -0.301` va `std = 2.9237/2.478 = 1.180` thay vi 0 va 1.
+
+(a) la cach doc kha di hon, vi K6 **da DAT** o Rev 21 (sai so ~1e-8) va K6 chinh la phep kiem scaler
+khop du lieu. Nhung khong the xac minh (b) nua: `scaler_7d.pt` cu da bi ghi de.
+
+**He qua neu (a) dung:** cac con so tuyet doi o Muc 43 (sai so tu the 5.98 A, bias 3.46 A) duoc do
+tren mot frame tui khac frame hien tai. Ket luan dinh tinh cua Muc 43 khong phu thuoc frame (vong
+quay khong phan biet duoc voi ngau nhien; `d` tai tao phan bo bien cua chinh no), nhung **khong duoc
+so truc tiep con so tuyet doi cua Muc 43 voi con so do tren du lieu hien tai**.
+
+### 58.3 Viec phai lam truoc khi train
+
+Chay **K6** (`check_step0_channel.py`). No doi scaler khop trung binh/std tinh **truc tiep** tu pkl
+hien tai trong 1e-4. Neu K6 dat thi trang thai hien tai tu nhat quan va Rev 22 an toan, bat ke (a)
+hay (b) la dung cho qua khu. Neu K6 **khong** dat thi `compute_scaler.py` dang sap va khong duoc train.
+
+Day dung la cho R15b sinh ra: **phep kiem phai xac minh tien de cua no.** Mot lan scaler cu da lam
+K1 so mot tep voi ban sao cua chinh no va pass RONG (Muc 8).
