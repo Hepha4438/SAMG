@@ -4254,3 +4254,81 @@ he phu thuoc** cac quyet dinh lien ket truoc do, vi khi huan luyen chung chua ba
 Diem cuoi do la mot khiem khuyet kien truc cu the va chua tung ghi: ba head lien ket nhin token va
 hinh hoc, **khong nhin do thi dang duoc dung**. Chung khong the biet dummy nao da bi chiem; chi co
 mask luc giai ma biet. Do la ly do hop ly nhat cho viec `p` giam theo L.
+
+---
+
+## Muc 56 -- Phan dinh: co che (i) thang. Du doan cua toi o 55.3 SAI
+
+### 56.1 Hai tuong quan
+
+| bien | Pearson voi lien thong |
+|---|---|
+| `DELTA = L - L_true` | **-0.3834** |
+| `L_true` | **+0.0365** |
+
+`L_true` gan nhu **khong co suc du doan nao**. Bien quyet dinh la `DELTA`.
+
+| DELTA | n | lien thong |
+|---|---|---|
+| <= -3 | 284 | 0.7465 |
+| -2..-1 | 246 | 0.6098 |
+| **0** | **161** | **0.6460** |
+| +1..+2 | 233 | 0.4635 |
+| +3..+5 | 215 | 0.2930 |
+| >= +6 | 105 | 0.0857 |
+
+**Toi dat cuoc vao (ii) "phan tu dai thi kho hon" va dat cuoc do SAI.** Co che (i) -- `L` khong khop
+rieng tung hoc -- chiem uu the. Nghia la `[EOS]` **dung** la viec nen lam, nguoc han ket luan toi
+viet o cuoi Muc 55.3.
+
+Lap luan dan toi cho sai: toi suy tu viec `p` giam theo `L` (Muc 55.2) rang moi buoc gan kho dan khi
+phan tu dai. Nhung `p` giam theo **L**, va `L` o day phan lon la `L` **khong khop**; toi doc no thanh
+"phan tu dai" trong khi no la "chuoi bi dua dai hon can thiet". Hai thu khac nhau, va so lieu cu
+khong tach duoc -- dung nhu da ghi o 55.2 -- the nhung toi van dat cuoc theo cach doc cua minh.
+
+### 56.2 Bang "trong nhom DELTA <= 0" KHONG doc duoc nhu da thiet ke
+
+| L_true | n | lien thong |
+|---|---|---|
+| 2-3 | 26 | 1.0000 |
+| 4-5 | 189 | 0.7407 |
+| 6-7 | 260 | 0.6769 |
+| 8-23 | 216 | 0.5741 |
+
+Nhin thi "van giam", tuc theo chu thich in ra la (ii). **Nhung phep do nay bi nhiem.** Trong nhom
+`DELTA <= 0`, `L` va `L_true` chua roi nhau:
+- `L_true = 2-3` **va** `DELTA <= 0` buoc `L in {2,3}` -- chuoi rat ngan, lien thong 1.0000 la hien nhien.
+- `L_true = 8-23` **va** `DELTA <= 0` cho phep `L` toi 23 -- chuoi dai.
+
+Nen da giam 1.00 -> 0.57 trong bang nay rat co the chi la hieu ung cua `L`, khong phai cua `L_true`.
+Loc theo `DELTA <= 0` khong kiem soat duoc `L`. Hai tuong quan o 56.1 dang tin hon, va chung noi
+`L_true` khong quan trong.
+
+Day la lan thu hai toi thiet ke mot phep do co bien nhieu khong duoc kiem soat (lan truoc: Muc 47.2).
+Bo sung vao R15b: khi loc theo mot ham cua hai bien, phai kiem xem bien con lai co con bien thien
+trong tung nhom hay khong.
+
+### 56.3 Dinh luong: `[EOS]` duoc gi, va con lai bao nhieu
+
+- hien tai: **0.5193**
+- o `DELTA = 0`: **0.6460 +/- 0.0377** (n = 161)
+- muc tang ky vong neu sua duoc do dai: **+0.127**, tuc **+24% tuong doi**
+
+Dang ke, nhung khong bien doi cuc dien. Va con so quan trong hon:
+
+**O dung do dai, van con 35,4% bi dut.** Phan nay `[EOS]` khong vá duoc. No la loi cua chinh ba head
+lien ket, va gia thuyet con lai (chua kiem) van la hai thu o Muc 55.3:
+1. **exposure bias** -- `parent` co perplexity 1.087 khi teacher forcing tren token THAT (Muc 52.2),
+   nhung luc sinh no doc token do CHINH NO sinh;
+2. **ba head khong nhin do thi dang duoc dung** -- chung khong biet dummy nao da bi chiem; chi mask
+   luc giai ma biet. Khiem khuyet kien truc nay van dung, doc lap voi viec (i) hay (ii) thang.
+
+### 56.4 Thu tu uu tien cho Rev 22 (dua tren so lieu, khong dua tren truc giac)
+
+1. **`[EOS]`** -- do loi da do duoc: +0.127 lien thong. Can chay lai step0 + huan luyen lai.
+2. **Cho head lien ket thay do thi dang dung** (dummy nao da bi chiem) -- nham vao 35,4% con lai.
+3. **Giam exposure bias** (scheduled sampling) -- cung nham vao 35,4% do.
+4. C4 (`v_context.detach()`), 6D rotation -- nham vao **pose**, khong nham vao lien thong. Hoan.
+
+Muc 2 va 3 nham vao cung mot phan du nen **khong duoc gop** vao mot lan chay: neu gop thi lai khong
+tach duoc nguyen nhan, dung cai bay da tranh duoc o Rev 21.
