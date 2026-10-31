@@ -4169,3 +4169,88 @@ SA_raw +0.5454, logP -0.5273, Lipinski -0.2051. Head da hoc gan tran hon han hea
 
 Novelty 0.9895 (truoc la 1.0000): khoang 1% phan tu sinh ra co Tanimoto > 0.4 voi ligand tham chieu.
 **Khong ket luan gi tu con so nay** -- 13/1244 mau, chua kiem duoc khac 0 co y nghia hay khong.
+
+---
+
+## Muc 55 -- Du doan 54.4 dung ca ba phan, nhung CO CHE toi neu ra thi sai
+
+### 55.1 Ket qua
+
+| L | n | lien thong | GOC tb |
+|---|---|---|---|
+| 2-3 | 168 | **0.9345** | 1.07 |
+| 4-5 | 494 | 0.6478 | 1.35 |
+| 6-7 | 250 | 0.4200 | 1.65 |
+| 8-10 | 252 | 0.2341 | 1.92 |
+| 11-14 | 64 | **0.0938** | 2.47 |
+| 15+ | 16 | 0.0000 | 3.00 |
+
+Pearson(L, lien thong) = **-0.4846**.
+
+Du doan o Muc 54.4 (ghi truoc khi do): `r < -0.35` -> **-0.4846 DUNG**. `L=2-3 tren 0,80` ->
+**0.9345 DUNG**. `L>=11 duoi 0,15` -> **0.0938 DUNG**. Ca ba.
+
+(Chay lai cho 647/1275 = 0.5075 thay vi 645/1275 = 0.5059 -- khac 2 mau do thu tu sinh so ngau nhien
+thay doi khi them `diag["L"]`. Trong pham vi nhieu.)
+
+### 55.2 Nhung co che thi KHONG phai "L ngau nhien dai qua"
+
+Toi dien giai do dut la do `L` lay ngau nhien va khong co `[EOS]`. Kiem lai bang hai mo hinh:
+
+**Mo hinh A -- loi don le tich luy.** Moi fragment co xac suat `p` duoc gan dung, doc lap
+=> lien thong = `p^(L-1)`. Suy `p` tu tung khoang:
+
+| L | p suy ra |
+|---|---|
+| 2-3 | 0.9558 |
+| 4-5 | 0.8833 |
+| 6-7 | 0.8541 |
+| 8-10 | 0.8340 |
+| 11-14 | 0.8140 |
+
+`p` **khong hang so** -- giam tu 0.956 xuong 0.814. Lay `p = 0.956` roi du doan:
+
+| L | A du doan | thuc te | lech |
+|---|---|---|---|
+| 4-5 | 0.8543 | 0.6478 | -0.2065 |
+| 6-7 | 0.7808 | 0.4200 | -0.3608 |
+| 11-14 | 0.5960 | 0.0938 | **-0.5022** |
+
+Mo hinh A **du doan thieu rat nhieu** do dut. Vay tich luy khong giai thich het.
+
+**Nhung mo hinh "L dai qua" cung khong phai cau tra loi**, va day la cho toi da sai: `L` duoc lay tu
+**chinh phan phoi thuc nghiem cua train** (mean 5.92, median 5). Tren toan bo mau, `L` **khong he
+dai hon** do dai thuc -- no dung phan phoi. Cai sai chi la no khong khop **tung hoc**: hoc co ligand
+3 fragment van co the nhan `L = 12`.
+
+Nen hai co che khac nhau dang bi tron:
+- **(i) L khong khop RIENG tung hoc** -- `[EOS]` se vá duoc.
+- **(ii) phan tu cang dai cang kho** (bat ke L co khop hay khong) -- `[EOS]` **khong** vá duoc; day
+  la van de cua chinh head `parent`, va gan nhu chac la **exposure bias**: `parent` duoc do
+  perplexity 1.087 khi teacher forcing tren token THAT (Muc 52.2), nhung luc sinh thi no doc token
+  do CHINH NO sinh ra -- lech phan phoi, va lech do tich luy theo L.
+
+So lieu hien co **khong tach duoc** (i) va (ii), vi ca hai deu lam lien thong giam theo `L`.
+
+### 55.3 Phep do phan dinh (da cai, chua chay)
+
+Bien quyet dinh la `DELTA = L - L_true`, voi `L_true` = so fragment that cua ligand tham chieu o hoc
+do (`batch.seq_len`). Da them vao `step7_generate_eval.py`: bang lien thong theo `DELTA`, hai tuong
+quan `Pearson(DELTA, ·)` va `Pearson(L_true, ·)`, va -- quan trong nhat -- **trong nhom
+`DELTA <= 0`** (chuoi khong dai hon that), lien thong theo `L_true`.
+
+**Du doan truoc khi do (R5):**
+- Neu **(i)** chiem uu the: trong nhom `DELTA <= 0`, lien thong se **phang** theo `L_true` va o tren
+  0,80 o moi khoang; `|Pearson(DELTA, ·)|` se lon hon `|Pearson(L_true, ·)|`.
+- Neu **(ii)** chiem uu the: trong nhom `DELTA <= 0`, lien thong **van giam** theo `L_true` (tu ~0,9
+  o `L_true = 2-3` xuong duoi 0,30 o `L_true >= 8`); `|Pearson(L_true, ·)|` se lon hon.
+
+Toi dat cuoc vao **(ii) chiem uu the**, vi mo hinh A da cho thay `p` tu no giam theo L -- tuc moi
+buoc gan **kho dan**, khong chi nhieu buoc hon. Neu dung thi `[EOS]` **khong** phai viec dang lam
+truoc o Rev 22; viec dang lam la giam exposure bias (scheduled sampling, hoac cho head lien ket thay
+lua chon cua chinh no o buoc truoc -- hien tai `decode_links` giai ma tuan tu nhung **logits khong
+he phu thuoc** cac quyet dinh lien ket truoc do, vi khi huan luyen chung chua bao gio duoc thay).
+
+Diem cuoi do la mot khiem khuyet kien truc cu the va chua tung ghi: ba head lien ket nhin token va
+hinh hoc, **khong nhin do thi dang duoc dung**. Chung khong the biet dummy nao da bi chiem; chi co
+mask luc giai ma biet. Do la ly do hop ly nhat cho viec `p` giam theo L.

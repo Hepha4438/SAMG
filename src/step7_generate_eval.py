@@ -419,6 +419,12 @@ def main():
         pocket_R = batch.pocket_R.view(3, 3).double().cpu().numpy()
         pocket_t = batch.pocket_t.view(3).double().cpu().numpy()
 
+        # Muc 55: do dai THAT cua ligand tham chieu o hoc nay. Can de tach "L dai qua so voi
+        # hoc NAY" khoi "phan tu dai thi kho hon noi chung".
+        try:
+            L_true = int(batch.seq_len.view(-1)[0].item())
+        except Exception:
+            L_true = -1
         entry = dataset.target_entries[dataset.valid_indices[bi]]
         ref_mol = Chem.SDMolSupplier(os.path.join(st.DATASET_DIR, entry[2]))[0]
         ref_fp = AllChem.GetMorganFingerprintAsBitVect(ref_mol, 2, 2048) if ref_mol else None
@@ -438,6 +444,7 @@ def main():
                     mol, diag = build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t)
                 rows.append(chem_metrics(mol, sa_fn))
                 diag["L"] = int(L)          # Muc 54.4: de kiem gia thuyet "L ngau nhien gay dut"
+                diag["L_true"] = L_true     # Muc 55
                 diags.append(diag)
                 if ref_fp is not None:
                     fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, 2048)
@@ -513,6 +520,42 @@ def main():
                 r = np.corrcoef(Ls, (nm == 1).astype(float))[0, 1]
                 out["corr_L_lienthong"] = float(r)
                 print(f"      tuong quan Pearson(L, lien thong) = {r:+.4f}")
+
+            # Muc 55: phep do PHAN DINH. Neu nguyen nhan la "L khong khop voi hoc nay" thi bien
+            # quyet dinh phai la DELTA = L - L_true, va o DELTA <= 0 lien thong phai cao bat ke L.
+            # Neu nguyen nhan la "phan tu dai thi kho hon" thi L_true moi la bien quyet dinh, va
+            # o DELTA <= 0 lien thong van giam theo L_true.
+            Lt = np.array([x.get("L_true", -1) for x in diags])
+            m_ok = Lt > 0
+            if m_ok.sum() > 50:
+                D = (Ls - Lt)[m_ok]
+                conn = (nm == 1).astype(float)[m_ok]
+                print(f"\n      lien thong theo DELTA = L - L_true  (n={int(m_ok.sum())}):")
+                print(f"      {'DELTA':>10}{'n':>7}{'lien thong':>12}")
+                for lo, hi, lab in [(-99, -3, "<= -3"), (-2, -1, "-2..-1"), (0, 0, "0"),
+                                     (1, 2, "+1..+2"), (3, 5, "+3..+5"), (6, 99, ">= +6")]:
+                    mm = (D >= lo) & (D <= hi)
+                    if mm.sum() == 0:
+                        continue
+                    print(f"      {lab:>10}{int(mm.sum()):7d}{float(conn[mm].mean()):12.4f}")
+                rd = float(np.corrcoef(D, conn)[0, 1])
+                rt = float(np.corrcoef(Lt[m_ok], conn)[0, 1])
+                out["corr_delta_lienthong"], out["corr_Ltrue_lienthong"] = rd, rt
+                print(f"      Pearson(DELTA, lien thong) = {rd:+.4f}")
+                print(f"      Pearson(L_true, lien thong) = {rt:+.4f}")
+                # Trong nhom DELTA <= 0 (chuoi KHONG dai hon that), lien thong con giam theo L_true?
+                sub = D <= 0
+                if sub.sum() > 30:
+                    lt_s, cs = Lt[m_ok][sub], conn[sub]
+                    print(f"\n      TRONG nhom DELTA <= 0 (n={int(sub.sum())}): lien thong theo L_true")
+                    print(f"      {'L_true':>10}{'n':>7}{'lien thong':>12}")
+                    for lo, hi in [(2, 3), (4, 5), (6, 7), (8, 23)]:
+                        mm = (lt_s >= lo) & (lt_s <= hi)
+                        if mm.sum() == 0:
+                            continue
+                        print(f"      {f'{lo}-{hi}':>10}{int(mm.sum()):7d}{float(cs[mm].mean()):12.4f}")
+                    print("      (van giam => do dai THAT la nguyen nhan, [EOS] khong vá duoc;"
+                          " phang => L khong khop moi la nguyen nhan, [EOS] se giup)")
         else:
             no = np.array([x.get("n_dummy_mo_coi", 0) for x in diags])
             out["dummy_mo_coi_mean"] = float(no.mean())
