@@ -129,27 +129,42 @@ def empirical_lengths(st, pkl_by_id):
 
 
 @torch.no_grad()
-def generate_one(model, h_target, target_mask, vocab_size, length, temperature, device, banned):
+def generate_one(model, h_target, target_mask, vocab_size, length, temperature, device, banned,
+                 eos_id=None, max_len=None):
     """Lay mau TOAN BO chuoi token truoc, roi MOT forward cuoi voi target_ids de sinh 7D dung tren
     token cua chinh vi tri do (Muc 42.2). Ton L+1 forward thay vi 2L."""
     sos = torch.zeros(1, 1, dtype=torch.long, device=device)      # [SOS] = id 0
     inp = sos
     toks = []
-    for _ in range(length):
+    hit_eos = False
+    # S12 (Rev 22): neu vocab co [EOS] thi MO HINH quyet dinh do dai -- sinh den khi gap [EOS],
+    # chan tren `max_len`. Truoc day do dai duoc lay NGAU NHIEN tu phan phoi train, va Muc 56.1 do
+    # duoc day la bien quyet dinh cua do dut: Pearson(L - L_true, lien thong) = -0.3834.
+    # `length` chi con duoc dung khi vocab chua co [EOS] (duong cu, de tuong thich nguoc).
+    n_steps = (max_len if eos_id is not None else length)
+    for _ in range(n_steps):
         logits, _, _, _, _lk = model.generator(inp, h_target, [], target_mask=target_mask)
         p = torch.softmax(logits[:, -1, :] / temperature, dim=-1)
         p[:, banned] = 0.0
         p = p / p.sum(dim=-1, keepdim=True).clamp_min(1e-12)
         nxt = torch.multinomial(p, 1)
-        toks.append(int(nxt.item()))
+        tid = int(nxt.item())
+        if eos_id is not None and tid == eos_id:
+            hit_eos = True
+            break
+        toks.append(tid)
         inp = torch.cat([inp, nxt], dim=1)
+    if not toks:
+        raise ValueError("mo hinh sinh [EOS] ngay o buoc dau -- chuoi rong")
+    # `toks` KHONG chua [EOS]: no khong co pose va khong co cha, nen khong duoc dua vao forward
+    # tinh 7D/link. Dung voi luc huan luyen, o do vi tri EOS bi geo_mask = 0 va link = -100 loai ra.
     tgt = torch.tensor([toks], dtype=torch.long, device=device)
     inp_final = torch.cat([sos, tgt[:, :-1]], dim=1)
     _, _, sampled_7d, _, link_logits = model.generator(inp_final, h_target, [],
                                                        target_mask=target_mask, target_ids=tgt)
     # S8: link_logits lay tu DUNG forward nay -- cac head lien ket deu doc `geo_in`/`frag_repr`
     # dung tren target_ids, giong het luc huan luyen (teacher forcing tren token).
-    return toks, sampled_7d[0].double().cpu().numpy(), link_logits
+    return toks, sampled_7d[0].double().cpu().numpy(), link_logits, hit_eos
 
 
 def n_dummies(entry):
@@ -296,6 +311,11 @@ def main():
     # S8. "channel" = do thi do kenh lien ket quyet dinh (Rev 21). "geometry" = ghep dummy theo
     # khoang cach (duong cu, Rev 20) -- giu lai de A/B tren CUNG mot bo mau sinh ra.
     ap.add_argument("--assemble", choices=["channel", "geometry"], default="channel")
+    # S12: chan tren khi sinh den [EOS]. 23 = max so fragment/phan tu tren train; x1.5 de mo hinh
+    # con cho vuot neu no muon, nhung khong chay vo han.
+    ap.add_argument("--max-len", type=int, default=35)
+    ap.add_argument("--no-eos", action="store_true",
+                     help="bo qua [EOS], lay do dai ngau nhien nhu Rev 21 (de A/B)")
     ap.add_argument("--list-ckpt", action="store_true",
                      help="liet ke checkpoint kem val loss va co head lien ket hay khong, roi thoat")
     ap.add_argument("--link-mode", choices=["greedy", "sample"], default="greedy",
@@ -404,12 +424,18 @@ def main():
     from datasets.pl_data import ProteinLigandDataLoader
     loader = ProteinLigandDataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
     banned = torch.tensor([vocab.get("[SOS]", 0), vocab.get("[UNK]", 1)], dtype=torch.long, device=device)
+    eos_id = None if args.no_eos else vocab.get("[EOS]")
+    if eos_id is None:
+        print("[!] vocab KHONG co [EOS] (hoac --no-eos) -> lay do dai NGAU NHIEN tu phan phoi train."
+              "  Day la duong Rev 21; xem Muc 56.1 ve han che cua no.")
+    else:
+        print(f"[*] [EOS] id = {eos_id}; MO HINH quyet dinh do dai, chan tren --max-len = {args.max_len}")
 
     if args.out_sdf:
         os.makedirs(args.out_sdf, exist_ok=True)
 
     rows, errs, diags, novel_flags = [], [], [], []
-    n_pocket, n_gen = 0, 0
+    n_pocket, n_gen, n_eos = 0, 0, 0
     for bi, batch in enumerate(loader):
         if args.n_pockets and n_pocket >= args.n_pockets:
             break
@@ -434,8 +460,10 @@ def main():
             n_gen += 1
             L = int(np.random.choice(lens))
             try:
-                toks, poses, link_logits = generate_one(model, h_target, target_mask, len(vocab),
-                                                         L, args.temperature, device, banned)
+                toks, poses, link_logits, hit_eos = generate_one(
+                    model, h_target, target_mask, len(vocab), L, args.temperature, device, banned,
+                    eos_id=eos_id, max_len=args.max_len)
+                n_eos += int(hit_eos)
                 if args.assemble == "channel":
                     mol, diag = build_mol_channel(toks, poses, inv_vocab, frag_dict,
                                                    pocket_R, pocket_t, link_logits,
@@ -443,7 +471,8 @@ def main():
                 else:
                     mol, diag = build_mol(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t)
                 rows.append(chem_metrics(mol, sa_fn))
-                diag["L"] = int(L)          # Muc 54.4: de kiem gia thuyet "L ngau nhien gay dut"
+                # S12: khi co [EOS] thi do dai THUC TE la len(toks), khong phai L da rut tham.
+                diag["L"] = int(len(toks)) if eos_id is not None else int(L)
                 diag["L_true"] = L_true     # Muc 55
                 diags.append(diag)
                 if ref_fp is not None:
@@ -468,6 +497,9 @@ def main():
     # Muc 43: "sanitize duoc" KHONG du de goi la phan tu -- mot dam fragment roi rac van sanitize
     # duoc. Validity that phai doi LIEN THONG (1 manh).
     n_conn = sum(1 for d_ in diags if d_["n_manh"] == 1)
+    if eos_id is not None:
+        print(f"\n  Dung bang [EOS] (khong cham --max-len): {n_eos}/{n_gen} = {n_eos / max(n_gen, 1):.4f}")
+        out["eos_rate"] = n_eos / max(n_gen, 1)
     print(f"\n  Validity (chi sanitize duoc):        {len(ok)}/{n_gen} = {len(ok) / max(n_gen, 1):.4f}")
     print(f"  Validity (sanitize VA lien thong):   {n_conn}/{n_gen} = {n_conn / max(n_gen, 1):.4f}"
           f"   <- con so that")
