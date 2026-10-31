@@ -4557,3 +4557,34 @@ Muc 58.2 suy rang frame tui co the da doi giua Rev 20 va Rev 21, va rang cac con
 Muc 43 do tren frame khac. **Khong co co so nao cho viec do.** `shift` that hien tai (5.161378) trung
 voi con so Rev 20, nen frame **khong doi**, va cac con so tuyet doi cua Muc 43 **van so sanh duoc**
 voi du lieu hien tai. Bo doan canh bao o cuoi 58.2.
+
+---
+
+## Muc 60 -- Trang thai du lieu Rev 22 da tu nhat quan. San sang huan luyen
+
+| phep kiem | ket qua |
+|---|---|
+| K5 parent hop le | DAT (11/119431 goc moi, hop le -- Muc 45.1) |
+| **K6 scaler tu nhat quan** | **DAT, sai so 2.5e-09 .. 1.3e-07** |
+| K7 vocab | DAT, 3984 = 3981 + [SOS] + [UNK] + [EOS] |
+| K8 tai dung tu kenh lien ket | DAT, 0.9975 (lap the 0.6050, bao cao) |
+| K9 so complex frame_stable | DAT, 17200 / 764 / 255 |
+| E1-E6 ([EOS] + cosine) | DAT (Muc 58.1) |
+
+`compute_scaler.py` in `da loai 17200 hang [EOS]`, dung bang so phan tu train, va
+`shift = [5.1614, 1.5316, 0.3913, 0.1983, 0.1985, 0.2086, 0.1877]` -- trung **tung chu so** voi gia
+tri K6 tinh truc tiep tu pkl.
+
+### 60.1 E1-E6 van co hieu luc du da chay voi scaler sai
+
+`check_eos.py` duoc chay truoc khi `compute_scaler` duoc sua, tuc voi scaler sai. Nhung phan quyet
+cua E1-E6 **khong phu thuoc scaler**: E1 doc vocab; E2/E3/E4 doc chi so va mask; E5 dem so vi tri ma
+hai mask khac nhau; E6 doc duong LR. Chi cac **gia tri loss** in kem (loss_geo 8.3479, loss_token
+8.4101, loss_parent 1.0138) la tinh voi scaler sai, nen chung khong dung lam moc doi chieu cho log
+huan luyen. Chay lai `check_eos.py` (khoang 1 phut, CPU) de co moc dung.
+
+### 60.2 `fragment_dict.pkl` khong can dung lai
+
+`build_fragment_dict.py` doc `local_coords` tu pkl trong **frame fragment** va khong nap scaler, nen
+scaler sai khong anh huong. Ket qua cua no da chay tren dung ban step0 moi: 3981 SMILES,
+do phu token valid 0.9505, do phu tu vung 1.0000.
