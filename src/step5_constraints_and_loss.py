@@ -34,7 +34,9 @@ class GlobalLoss(nn.Module):
         # Interaction (Steric Clash)
         ligand_pos_3d, protein_pos_3d,
         # S7: kenh lien ket (Rev 21). link_logits/link_targets = None => bo qua (tuong thich nguoc).
-        link_logits=None, link_targets=None
+        link_logits=None, link_targets=None,
+        # S11 (Rev 22): mask hinh hoc tuong minh; None => suy nhu cu tu target_ids (khong co [EOS]).
+        geo_mask=None
     ):
         # ---------------------------------------------------------
         # A. L_Token: Semantic Cross-Entropy Loss
@@ -47,7 +49,7 @@ class GlobalLoss(nn.Module):
         # B. L_Geo: Geometric Flow NLL Loss (Masked)
         # ---------------------------------------------------------
         # Chỉ tính loss ở những vị trí có token hợp lệ, bỏ qua padding
-        pad_mask = (target_ids != 0).float()
+        pad_mask = ((target_ids != 0).float() if geo_mask is None else geo_mask.float())
         loss_geo_unclamped = (loss_geo_raw * pad_mask).sum() / (pad_mask.sum() + 1e-8)
         loss_geo = 20.0 * torch.log1p(torch.abs(loss_geo_unclamped) / 20.0) * torch.sign(loss_geo_unclamped)
 
