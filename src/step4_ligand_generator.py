@@ -95,7 +95,8 @@ class DualStreamLigandGenerator(nn.Module):
         self.register_buffer('shift_factors', shift_factors.clone().detach().view(1, 7))
         self.register_buffer('scale_factors', scale_factors.clone().detach().view(1, 7))
 
-    def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None, target_ids=None):
+    def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None,
+                target_ids=None, geo_mask=None):
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
 
@@ -163,7 +164,11 @@ class DualStreamLigandGenerator(nn.Module):
 
             # Chi nap token THAT vao reservoir NLL cua geometric_head -- dong bo tong the
             # voi Geo_Loss_Unclamped (step5), von duoc tinh SAU khi mask padding.
-            pad_mask_flat = (target_ids != 0).view(-1)
+            # S11 (Rev 22): uu tien geo_mask tuong minh. Cach suy cu `(target_ids != 0)` chi dung
+            # khi chuoi KHONG co [EOS]; voi [EOS] (id != 0) no se keo vi tri EOS -- khong co pose --
+            # vao loss hinh hoc. Giu duong cu de tuong thich nguoc khi geo_mask = None.
+            pad_mask_flat = ((target_ids != 0) if geo_mask is None
+                             else (geo_mask > 0.5)).reshape(-1)
             loss_geo_flat = self.geometric_head(geo_in_flat, target=target_scaled, pad_mask=pad_mask_flat)
             loss_geo = loss_geo_flat.view(batch_size, seq_len)
             sampled_7d = None
