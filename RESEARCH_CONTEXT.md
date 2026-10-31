@@ -4477,3 +4477,83 @@ hay (b) la dung cho qua khu. Neu K6 **khong** dat thi `compute_scaler.py` dang s
 
 Day dung la cho R15b sinh ra: **phep kiem phai xac minh tien de cua no.** Mot lan scaler cu da lam
 K1 so mot tep voi ban sao cua chinh no va pass RONG (Muc 8).
+
+---
+
+## Muc 59 -- K6 BAT DUOC mot loi do chinh toi gay ra. Muc 58 doc sai chieu
+
+### 59.1 Chieu lech nguoc voi gia dinh cua toi
+
+K6 in ra:
+
+| chieu | shift trong file | shift THAT (tinh truc tiep tu pkl) | rel |
+|---|---|---|---|
+| d | 4.415307 | **5.161378** | 1.45e-01 |
+| theta | 1.310230 | 1.531624 | 1.45e-01 |
+| phi | 0.334778 | 0.391346 | 1.45e-01 |
+| qw | 0.169673 | 0.198343 | 1.45e-01 |
+| qx | 0.169814 | 0.198508 | 1.45e-01 |
+| qy | 0.178487 | 0.208647 | 1.45e-01 |
+| qz | 0.160561 | 0.187691 | 1.45e-01 |
+
+**"shift that" = 5.161378 -- dung con so o Muc 43.4.** Tuc du lieu **khong doi**, va **scaler vua
+tinh moi la cai sai**. Muc 58 dat ca hai cach doc (a) va (b) vao kha nang "du lieu da doi" hoac
+"scaler cu"; ca hai **deu sai**. Cai dung la: *scaler MOI sai, vi mot loi toi vua them vao.*
+
+### 59.2 Chan doan: `rel` giong nhau den ba chu so tren CA BAY chieu
+
+Do la dau hieu khong the bo qua -- mot sai so **hinh hoc giong nhau tren moi chieu** khong the do du
+lieu, no phai do mot **mau so** chung. Ty le `shift_file / shift_that` tren bay chieu:
+
+```
+0.855451  0.855451  0.855453  0.855452  0.855452  0.855450  0.855454
+```
+
+Va:
+
+```
+token pose that                        = 101791
+so phan tu train frame_stable          =  17200
+101791 / (101791 + 17200) = 101791/118991 = 0.855451
+```
+
+Khop den **nam chu so**. Nguyen nhan: `compute_scaler.py` gom `data.target_7d`, ma tu S10
+`target_7d` co **them mot hang o vi tri `[EOS]`, toan 0**. Tong khong doi (cong 0) nhung **mau so
+tang 16,9%**, nen moi trung binh bi pha loang dung ty le do. `std` cung sai, va sai khong deu giua
+cac chieu vi them so 0 lam thay doi phuong sai theo cach phu thuoc gia tri trung binh.
+
+### 59.3 Day dung la rui ro "im lang" toi tu canh bao o Muc 57.4 -- va toi bo sot mot nguoi dung
+
+Muc 57.4 viet ro: `[EOS]` co id khac 0 nen moi cho suy mask tu `(target_ids != 0)` deu hong, va goi
+do la "loi im lang". Toi sua `step4` va `step5`, viet E5 de chung minh ban sua co tac dung... **roi
+bo sot `compute_scaler.py`**, la nguoi tieu dung thu ba cua `target_7d`.
+
+E5 khong the bat duoc dieu nay: no kiem duong `step6.forward -> step4/step5`, con `compute_scaler`
+di duong khac (doc `dataset[i]` truc tiep). **K6 bat duoc** -- va K6 chi bat duoc vi o Muc 45.6 no da
+duoc dinh nghia lai thanh phep kiem **tu nhat quan voi du lieu** chu khong phai "khop bang A1".
+Moc cu se pass rong o day.
+
+Bai hoc bo sung vao R15b: khi doi **dinh dang cua mot cau truc du lieu**, phai liet ke **moi noi
+tieu dung** no, khong phai chi nhung noi minh dang sua. Lenh dung la
+`grep -rn "target_7d" src/` **truoc** khi sua, khong phai sau khi vap.
+
+### 59.4 Da sua
+
+1. `compute_scaler.py` loai hang `[EOS]` bang `geo_mask`, in so hang da loai, va canh bao to neu
+   khong loai duoc hang nao (truong hop dataset chua co `geo_mask`). Commit `1971baf`.
+2. `VOCAB_EXPECTED` 3983 -> 3984 (K7). Day la thay doi **co chu dich**, kem chu thich de lan sau
+   khong ai ha moc ma tuong la cap nhat. Commit `41572c2`.
+3. Ba script chan doan con suy mask tu `(target_ids != 0)` -- `measure_logscale_realtokens.py`,
+   `measure_pocket_shuffle.py`, `measure_qy_signflip.py` -- duoc **dan canh bao o dau tep** thay vi
+   sua mu. Chung khong nam tren duong Rev 22, nhung se cho so SAI neu chay lai. Ban sua mot dong:
+   `(target_ids != 0) & (target_ids != vocab["[EOS]"])`. Commit `a02c3fa`, `8dfcbff`, `df22c8d`.
+4. `measure_marginal_7d.py` **khong** bi anh huong: no doc thang `target_7d` tu `"sequence"` cua pkl,
+   va pkl khong chua `[EOS]` (`[EOS]` duoc them o `__getitem__`).
+5. `check_link_heads.py` goi `model.forward(batch)` nen di duong co `geo_mask` -- khong anh huong.
+
+### 59.5 Huy bo ket luan cua Muc 58.2
+
+Muc 58.2 suy rang frame tui co the da doi giua Rev 20 va Rev 21, va rang cac con so tuyet doi cua
+Muc 43 do tren frame khac. **Khong co co so nao cho viec do.** `shift` that hien tai (5.161378) trung
+voi con so Rev 20, nen frame **khong doi**, va cac con so tuyet doi cua Muc 43 **van so sanh duoc**
+voi du lieu hien tai. Bo doan canh bao o cuoi 58.2.
