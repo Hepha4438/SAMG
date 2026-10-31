@@ -190,9 +190,25 @@ class SAMGOptimizedDataset(Dataset):
             input_ids_list.append(self.vocab.get(smiles_val, self.vocab.get("[UNK]", 1)))
             target_7d_list.append(item["spatial_tokens"])
 
+        # S10 (Rev 22): them [EOS] vao CUOI chuoi muc tieu de mo hinh hoc duoc khi nao dung.
+        #   input_ids  = [SOS, t0, ..., t_{L-1}]      (L+1 phan tu)
+        #   target_ids = [t0,  ..., t_{L-1}, EOS]     (L+1 phan tu)
+        # Vi tri cuoi (EOS) KHONG co pose va KHONG co cha. `loss_token` dung ignore_index=0 nen EOS
+        # (id != 0) duoc hoc -- dung y muon. Nhung `loss_geo` truoc day suy mask tu `target_ids != 0`,
+        # nen vi tri EOS se bi tinh vao loss hinh hoc voi pose RONG. Vi vay phai co mask TUONG MINH.
+        eos_id = self.vocab.get("[EOS]")
+        if eos_id is None:
+            raise KeyError("global_vocab khong co [EOS]. Phai chay lai step0 (S9, Rev 22).")
+        n_frag = len(input_ids_list) - 1              # = L
+        input_ids_list.append(eos_id)
+        target_7d_list.append([0.0] * 7)              # cho vi tri EOS; se bi geo_mask loai
+
         data.input_ids = torch.tensor(input_ids_list[:-1], dtype=torch.long)
         data.target_ids = torch.tensor(input_ids_list[1:], dtype=torch.long)
         data.target_7d = torch.tensor(target_7d_list[1:], dtype=torch.float)
+        # 1 o L vi tri fragment that, 0 o vi tri EOS. Padding duoc them o `forward` (padding_value=0).
+        data.geo_mask = torch.cat([torch.ones(n_frag, dtype=torch.float),
+                                    torch.zeros(1, dtype=torch.float)])
 
         # S7 (Rev 21): muc tieu cho ba head kenh lien ket.
         #  * `parent`: 0 = GOC, j+1 = fragment o vi tri j. step0 luu -1 cho goc (Muc 45.1: ligand
@@ -226,10 +242,14 @@ class SAMGOptimizedDataset(Dataset):
             # ⇒ phai tra theo `atomic_nums` cua ĐÚNG fragment tuong ung.
             asf.append(_ord_in(item, item.get("attach_self", -1)))
             apa.append(_ord_in(sequence_7d[int(p_)], item.get("attach_parent", -1)))
+        # S10: vi tri EOS khong co cha/diem gan -> -100 (ignore_index cua ca ba head).
+        par.append(-100)
+        asf.append(-100)
+        apa.append(-100)
         data.link_parent = torch.tensor(par, dtype=torch.long)
         data.link_attach_self = torch.tensor(asf, dtype=torch.long)
         data.link_attach_parent = torch.tensor(apa, dtype=torch.long)
-        data.seq_len = len(input_ids_list) - 1
+        data.seq_len = len(input_ids_list) - 1        # = L + 1 (gom ca vi tri EOS)
 
         # Dọn rác
         if hasattr(data, 'keys'):
@@ -389,10 +409,16 @@ class SAMGLightningModule(pl.LightningModule):
         input_ids = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.input_ids, lens)), batch_first=True, padding_value=0).to(device)
         target_ids = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_ids, lens)), batch_first=True, padding_value=0).to(device)
         target_7d = torch.nn.utils.rnn.pad_sequence(list(torch.split(data_batch.target_7d, lens)), batch_first=True, padding_value=0.0).to(device)
+        # S11 (Rev 22): mask hinh hoc TUONG MINH. Truoc day step4/step5 suy no tu `target_ids != 0`,
+        # dung khi padding la id 0 va chuoi khong co [EOS]. Nay [EOS] co id != 0 nen cach suy do se
+        # keo vi tri EOS (pose RONG) vao loss hinh hoc. geo_mask = 1 o fragment that, 0 o EOS va padding.
+        geo_mask = torch.nn.utils.rnn.pad_sequence(
+            list(torch.split(data_batch.geo_mask, lens)), batch_first=True, padding_value=0.0).to(device)
 
         logits_vocab, loss_geo_raw, sampled_7d, _, link_logits = self.generator(
             input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask,
-            target_ids=target_ids  # P2c: teacher forcing cho geometric head (xem step4_ligand_generator.py)
+            target_ids=target_ids,  # P2c: teacher forcing cho geometric head (xem step4_ligand_generator.py)
+            geo_mask=geo_mask
         )
         # S7: pad muc tieu kenh lien ket bang -100 (= bo qua trong cross_entropy), KHONG bang 0
         # (0 la lop "goc" hop le, pad bang 0 se day mo hinh doan "goc" o moi vi tri dem).
@@ -431,7 +457,7 @@ class SAMGLightningModule(pl.LightningModule):
             step1_outputs['pred_res_rot'].unsqueeze(0), target_q,
             step1_outputs['pred_res_chi'].unsqueeze(0), target_chi, 
             chi_mask, data_batch.ligand_pos, data_batch.protein_pos,
-            link_logits=link_logits, link_targets=link_targets
+            link_logits=link_logits, link_targets=link_targets, geo_mask=geo_mask
         )
         return total_loss, loss_dict
 
