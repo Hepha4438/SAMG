@@ -478,8 +478,18 @@ class SAMGLightningModule(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.config.lr, weight_decay=1e-2)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
-        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "monitor": "val/total_loss"}}
+        # S13 (Rev 22): cosine annealing thay ReduceLROnPlateau(factor=0.5, patience=5).
+        # Can cu tu du lieu, khong tu truc giac: trong lan chay Rev 21, scheduler fire DUNG MOT LAN
+        # quanh epoch 19->20 va Total_Loss tut -0.1833 trong khi nhip xung quanh la -0.054 -- gap
+        # 3,4 lan. Tuc mo hinh da bi LR giu lai tu truoc do, con `patience=5` thi gan nhu khong bao
+        # gio fire vi val giam cham nhung DEU. Cosine ha LR lien tuc nen khong co giai doan bi giu.
+        # Loshchilov & Hutter 2017, "SGDR: Stochastic Gradient Descent with Warm Restarts",
+        # ICLR 2017 (arXiv:1608.03983) -- day la bien khong restart (T_max = toan bo so epoch).
+        t_max = int(self.config.get("max_epochs", 25))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(t_max, 1), eta_min=1e-6)
+        return {"optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
 
 
 if __name__ == "__main__":
@@ -529,6 +539,8 @@ if __name__ == "__main__":
         # Co chon head doi chung: "diag_gauss" (Gaussian duong cheo, mac dinh) vs "maf"
         # (AutoregressiveFlowLayer, kien truc goc). Xem step4_ligand_generator.py.
         "geo_head": _args.geo_head,
+        # S13: cosine can biet tong so epoch de ha LR dung nhip (T_max).
+        "max_epochs": _args.max_epochs if _args.max_epochs else 25,
         "protein_encoder": {
             "num_blocks": 3,
             "num_layers": 3,
