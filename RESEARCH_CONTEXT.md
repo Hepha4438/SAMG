@@ -5118,3 +5118,83 @@ diem gan. Neu nguoc lai (MO HINH CHON > 60%) thi gia thuyet nay sai, va viec can
 sampling chu khong phai dong vao phan bo token.
 
 Ket qua phep do nay quyet dinh toan bo Rev 23. Khong code gi them cho den khi co no.
+
+---
+
+## Muc 68 -- PHAN QUYET: 92,7% so GOC phu la CUONG BUC. Rev 23 doi muc tieu hoan toan
+
+```
+GOC phu tach theo nguyen nhan (tong 331):
+  CUONG BUC (het diem gan, mo hinh khong duoc chon): 307  =  92.7%   [loi head TOKEN]
+  MO HINH CHON  (con ung vien cha hop le):            24  =   7.3%   [loi head PARENT]
+```
+
+Du doan ghi truoc o Muc 67.3: **CUONG BUC > 60%**. Thuc te **92,7%** -- dung huong va cuc doan hon
+muc da dat cuoc.
+
+### 68.1 He qua: hai muc toi dinh lam o Rev 23 deu SAI DICH
+
+- **Scheduled sampling / exposure bias cua head `parent`**: chi co the tac dong vao **7,3%** so GOC
+  phu. Neu sua hoan hao thi lien thong tang tu 0.7582 len khoang 0.776. **Khong dang mot lan huan
+  luyen 20 gio.**
+- **Cho head lien ket thay do thi dang dung**: khong lien quan. Van de khong phai head lien ket chon
+  sai, ma la **khong con gi de chon**.
+- **Dieu kien hoa `attach_parent` theo cha** (Muc 67.1): van dung ve mat kien truc, nhung thuoc nhom
+  do trung thuc, khong phai lien thong -- dung nhu da ghi.
+
+Nguyen nhan thuc la **head TOKEN**: no phat ra chuoi fragment **het diem gan**.
+
+### 68.2 Ke toan diem gan -- mot dieu kien DAI SO, khong phai van de hoc may
+
+Moi fragment co `d` dummy. Noi hai fragment tieu **2** dummy (mot moi ben). Mot cay `L` dinh co
+`L-1` canh, nen tieu `2(L-1)` dummy. Dieu kien **can**:
+
+```
+sum(d_i) >= 2(L - 1)      <=>      d trung binh >= 2 - 2/L
+```
+
+| L | d trung binh toi thieu |
+|---|---|
+| 3 | 1.333 |
+| 5 | 1.600 |
+| 9 | 1.778 |
+| 16 | 1.875 |
+
+Va pool dummy tu do thay doi **`d - 2`** moi khi them mot fragment:
+
+| d | tac dong len pool |
+|---|---|
+| 1 (dau mut) | **GIAM 1** |
+| 2 (lien ket) | khong doi |
+| >= 3 (diem nhanh) | TANG `d - 2` |
+
+Nen neu mo hinh phat qua nhieu fragment `d = 1` so voi so diem nhanh, pool **can**, va moi fragment
+sau do bi cuong buc thanh GOC. Day khong phai sai so cua mot head -- day la mot **rang buoc dai so**
+bi vi pham, va no do duoc **truc tiep tu chuoi token**, khong can nhin vao mo hinh.
+
+Da them phep do (S15) vao `step7_generate_eval.py`: phan bo `d` cua fragment sinh ra so voi phan bo
+`d` tren **train** (co trong so theo `n_seen` trong `fragment_dict`), `d` trung binh hai ben, va ty le
+phan tu **vi pham dieu kien can**. Khong can huan luyen lai.
+
+**Du doan ghi truoc (R5):** `d` trung binh cua chuoi sinh ra se **thap hon** train, va ty le `d = 1`
+se **cao hon** train it nhat 5 diem phan tram. Neu hai phan bo gan nhu trung nhau thi gia thuyet
+"phat qua nhieu dau mut" **sai**, va nguyen nhan cuong buc phai nam o **thu tu** phat (phat dau mut
+qua som) chu khong phai o ty le.
+
+### 68.3 CANH BAO ve mot ban sua de bi coi la thanh cong gia
+
+Ban sua re nhat: luc giai ma, khi pool = 0 thi **buoc phat `[EOS]`** thay vi cuong buc GOC. Khong
+can huan luyen lai, va no se day **lien thong len gan 1,00 gan nhu tuc thi**.
+
+Nhung do la **thanh cong rong**: no khong lam mo hinh sinh phan tu tot hon, no chi **cat ngan** phan
+tu tai diem pool can. Lien thong se thoi het y nghia lam tieu chi, vi no tro thanh **dung theo cau
+truc** -- dung cai loi R5 canh bao (mot tieu chi khong the that bai).
+
+Neu lam ban sua do thi **buoc phai** doi tieu chi sang: **chat luong phan tu o cung muc lien thong**
+-- so fragment trung binh, khoi luong phan tu, QED/SA -- doi chieu voi ligand tham chieu. Va phai ghi
+ro trong bao cao rang lien thong da duoc bao dam bang cau truc, khong phai do mo hinh hoc duoc.
+
+Ban sua **dung** la cho head TOKEN **biet trang thai pool** khi chon fragment tiep theo. Khac voi
+truong hop o Muc 67.2, dac trung nay **HOC DUOC duoi teacher forcing**: trong mot phan tu that, pool
+bien thien theo tung buoc DFS va rang buoc that su cai gi co the den tiep -- nen dac trung mang thong
+tin phan biet. Day la diem khac biet quan trong giua head token va cac head lien ket.

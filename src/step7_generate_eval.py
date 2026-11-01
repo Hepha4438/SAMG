@@ -292,6 +292,9 @@ def build_mol_channel(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t,
     diag["n_goc"] = int(sum(1 for x in par if x < 0))
     diag["goc_cuong_buc"] = int(n_forced)      # S14: het diem gan -> loi head TOKEN
     diag["goc_mo_hinh_chon"] = int(n_chosen)   # S14: con ung vien -> loi head PARENT
+    # S15 (Muc 68): so dummy cua tung fragment theo thu tu sinh. Them mot fragment d dummy lam
+    # pool dummy tu do doi (d - 2): d=1 lam CAN pool, d=2 trung tinh, d>=3 nuoi pool.
+    diag["d_list"] = [int(x) for x in n_dum]
     return mol, diag
 
 
@@ -572,6 +575,44 @@ def main():
                   f"  = {gc.sum() / max(tong, 1) * 100:5.1f}%   [loi head PARENT]")
             print("        Hai loai nay can hai ban sua khac nhau: cuong buc => chon fragment co du"
                   " diem gan; mo hinh chon => exposure bias cua head parent.")
+
+            # ---------------- S15 (Muc 68): ke toan diem gan
+            # Dieu kien dai so de mot cay L fragment ton tai: sum(d_i) >= 2(L-1),
+            # tuc d trung binh >= 2 - 2/L. Neu mo hinh phat qua nhieu d=1 thi pool can.
+            gen_d = [d for x in diags for d in x.get("d_list", [])]
+            if gen_d:
+                gd = np.asarray(gen_d)
+                # moc doi chieu: phan bo d tren TRAIN, co trong so theo tan so xuat hien
+                ref = {}
+                for smi, e in frag_dict.items():
+                    z = np.asarray(e["atomic_nums"]).reshape(-1)
+                    dd = int((z == 0).sum())
+                    ref[dd] = ref.get(dd, 0) + int(e.get("n_seen", 1))
+                tot_ref = sum(ref.values())
+                mean_ref = sum(k * v for k, v in ref.items()) / max(tot_ref, 1)
+                print(f"\n      KE TOAN DIEM GAN (S15): so dummy moi fragment")
+                print(f"      {'d':>4}{'sinh ra':>10}{'train':>10}{'lech':>9}"
+                      f"   (them fragment d dummy => pool doi d-2)")
+                for dd in range(1, 7):
+                    pg = float((gd == dd).mean())
+                    pr = ref.get(dd, 0) / max(tot_ref, 1)
+                    print(f"      {dd:>4}{pg:10.4f}{pr:10.4f}{pg - pr:+9.4f}")
+                print(f"      d trung binh:  sinh ra {gd.mean():.4f}   train {mean_ref:.4f}"
+                      f"   lech {gd.mean() - mean_ref:+.4f}")
+                out["d_mean_gen"], out["d_mean_train"] = float(gd.mean()), float(mean_ref)
+                out["d1_frac_gen"] = float((gd == 1).mean())
+                out["d1_frac_train"] = ref.get(1, 0) / max(tot_ref, 1)
+                # Dieu kien can, kiem tren TUNG phan tu
+                viol = 0
+                for x in diags:
+                    dl = x.get("d_list", [])
+                    if len(dl) >= 2 and sum(dl) < 2 * (len(dl) - 1):
+                        viol += 1
+                print(f"      phan tu vi pham dieu kien can sum(d) >= 2(L-1): {viol}/{len(diags)}"
+                      f" = {viol / max(len(diags), 1):.4f}")
+                print("      (vi pham => KHONG THE lien thong du head parent hoan hao."
+                      " Day la tran do chinh chuoi token dat ra.)")
+                out["vi_pham_dieu_kien_can"] = viol / max(len(diags), 1)
             print(f"      link that bai trung binh: {nf.mean():.2f}  (dummy duoc chi khong ton tai"
                   f" hoac da bi chiem -- loi giai ma, khong phai loi pose)")
             print("      LUU Y: o che do channel, lien thong KHONG con phu thuoc pose (Muc 43.7)."
