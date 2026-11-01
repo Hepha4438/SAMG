@@ -4940,3 +4940,115 @@ ep 24 se khong khac ep 19**, nen con so 0.7671 cua ban xem truoc van la uoc luon
 
 `Token_Loss` 1.8860 (ep 19) -> 1.8253 (ep 24), cham dan (-0.0068 o buoc cuoi). Day la cot duy nhat
 nam epoch cuoi con mua duoc gi, va no mua **chat luong hoa hoc**, khong mua lien thong.
+
+---
+
+## Muc 66 -- KET QUA CUOI Rev 22. `[EOS]` cho +0.214 o 11,5 SE
+
+Checkpoint `samg-opt-epoch=024-val_total_loss=13.8515`, split test, 255 hoc, 1275 mau moi nhanh,
+cung seed, chi khac mot co.
+
+### 66.1 Bang ket qua
+
+| | lien thong | SE | ghi chu |
+|---|---|---|---|
+| **co `[EOS]`** | **0.7576** | 0.0122 | `eos_rate = 1274/1275 = 0.9992` |
+| `--no-eos` (doi chung) | 0.5433 | 0.0142 | |
+| Rev 21 | 0.5193 | 0.0142 | |
+| **Rev 20 (geometry)** | **0.0055** | -- | Muc 54.1 |
+| Rev 20 goc (Muc 43) | **0.0000** | -- | 0/29 |
+
+- hieu cua `[EOS]`: **+0.2143 +/- 0.0187 = 11,5 SE**
+- doi chung so voi Rev 21: **+0.024 +/- 0.020 = 1,2 SE -> khong phan biet duoc**
+
+Doi chung khop Rev 21 o n day du, nen phep tach qua hai truc (Muc 57.3) **hop le**: toan bo +0.214
+thuoc ve `[EOS]`, khong lan voi cosine.
+
+`so GOC trung binh`: **1.27** (co `[EOS]`) so voi 1.67 (doi chung) so voi 1.57 (Rev 21).
+
+### 66.2 Phan quyet du doan
+
+| du doan ghi truoc | thuc te | |
+|---|---|---|
+| lien thong co `[EOS]`: **0.62 - 0.70** | **0.7576** | **vuot bien tren** |
+| lien thong `--no-eos`: ~0.52, khong doi | 0.5433 (1,2 SE) | **dat** |
+| `eos_rate` > 0.95 | 0.9992 | **dat** |
+| `Pocket_Loss` ep 24 < 2.95 | 2.9390 | **dat** (Muc 65.1) |
+| `Geo_Loss_Unclamped` ep 24 < 8.20 | ~8.300 | **khong dat** (Muc 65.1) |
+
+Ban xem truoc (ep 019, 60 hoc) cho 0.7671 +/- 0.0247; ban cuoi 0.7576 +/- 0.0122 -- lech **0,3 SE**.
+Xac nhan du bao o Muc 65.3 rang ba head lien ket da hoi tu tu ep 19 nen lien thong khong doi.
+
+### 66.3 Co che: xac nhan lai o n day du
+
+| DELTA = 0 | n | lien thong |
+|---|---|---|
+| doi chung | 129 | 0.5116 |
+| co `[EOS]` | 126 | **0.8016** |
+
+Muc tang **+0.290 ngay tai `DELTA = 0`**, noi hai nhanh co cung `L = L_true`. Neu `[EOS]` lam viec
+bang cach khop do dai thi o day muc tang phai bang 0. **Co che "khop `L_true`" bi bac lan thu hai,
+voi n day du.** Bien dung la *`L` khop y dinh cua chinh mo hinh* (Muc 64.3).
+
+`Pearson(L_true, lien thong) = +0.0332` (doi chung: -0.0067). `L_true` tiep tuc **khong** co suc du
+doan nao.
+
+### 66.4 Phan du 24% KHONG phai loi don le tich luy o L lon -- sua Muc 64/phan tra loi
+
+| L | n | lien thong | p suy ra | GOC tb | GOC neu loi doc lap 5% |
+|---|---|---|---|---|---|
+| 2-3 | 208 | 0.9567 | 0.9709 | 1.04 | 1.07 |
+| 4-5 | 389 | 0.8535 | 0.9557 | 1.15 | 1.18 |
+| 6-7 | 299 | 0.7492 | 0.9489 | 1.27 | 1.27 |
+| **8-10** | 217 | **0.5161** | 0.9206 | 1.53 | 1.40 |
+| **11-14** | 92 | **0.5435** | 0.9484 | 1.57 | 1.58 |
+| **15+** | 29 | **0.5517** | 0.9635 | 1.62 | 1.80 |
+
+O **L = 2..7** mo hinh tich luy khop tot, `p ~ 0.95`. Nhung tu **L >= 8** lien thong **PHANG o
+~0.52-0.55** chu khong giam tiep, va `so GOC` **bao hoa quanh 1,5-1,6** thay vi tang tuyen tinh theo
+L. Loi **khong doc lap** o L lon.
+
+Trong phan tra loi truoc (du lieu 60 hoc) toi uoc `p` gan nhu hang so 0.926-0.979 va suy ra "loi moi
+fragment 6,1%", roi tinh bang "giam loi xuong 2% thi lien thong vuot 0.90". **Phep tinh do khong con
+dung**: mau 60 hoc khong du de thay cho phang o L >= 8 (chi 13 mau o L=11-14). Voi n day du, mo hinh
+tich luy **khong** mo ta duoc duoi.
+
+Giai thich kha di cho cho phang: co `[EOS]`, mo hinh **tu chon** do dai, nen no chi di dai khi tu tin
+gan het -- mot hieu ung **chon loc**, khong phai mot quy luat tich luy. He qua: khong duoc ngoai suy
+"giam loi moi buoc k lan thi lien thong tang nhu p^(L-1)".
+
+### 66.5 301 mau bi dut nam o dau -- muc tieu dinh luong cho Rev 23
+
+| L | so mau dut | ty trong |
+|---|---|---|
+| 2-3 | 9 | 3,0% |
+| 4-5 | 57 | 18,9% |
+| **6-7** | **75** | **24,9%** |
+| **8-10** | **105** | **34,9%** |
+| 11-14 | 42 | 14,0% |
+| 15+ | 13 | 4,3% |
+
+**`L >= 6` chiem 78% toan bo so mau bi dut**, va rieng `L = 8-10` chiem 35%.
+
+Nen muc tieu cua Rev 23 khong phai "giam loi moi fragment" chung chung, ma la **khoang
+`L = 6..10`**: 180/301 = 60% so mau dut nam o day. Neu dua hai khoang do len muc cua `L = 4-5`
+(0.8535) thi lien thong toan cuc len khoang **0.85**.
+
+### 66.6 Chi so hoa hoc
+
+| | co `[EOS]` | `--no-eos` | Rev 21 | tran `gt_template` |
+|---|---|---|---|---|
+| QED | 0.4832 | 0.4737 | 0.4639 | 0.5583 |
+| SA_raw | 3.3422 | 3.3206 | 3.3627 | 2.8077 |
+| logP | 1.0893 | 1.0302 | 0.8575 | 1.3972 |
+| Lipinski | 4.3712 | 4.4162 | 4.3714 | 4.5685 |
+| Novelty | 0.9871 | 0.9919 | 0.9895 | -- |
+| Validity (sanitize) | 0.9741 | 0.9686 | 0.9757 | -- |
+
+Ty le sanitize gan bang nhau o ca ba, nen bang nay doc duoc (khong con hieu ung chon loc cua
+Muc 54.5). **`[EOS]` khong lam chi so hoa hoc tot len dang ke**: QED 0.4832 so voi 0.4737 va 0.4639,
+deu trong khoang vai phan nghin den vai phan tram. Dieu do hop ly -- `[EOS]` sua **cau truc**, con
+chat luong hoa hoc do head token quyet dinh.
+
+QED con cach tran 0.075. Day la cho `Token_Loss` (1.8253 o ep 24, van con giam) va cac muc ve chat
+luong fragment se tac dong, khong phai cho kenh lien ket.
