@@ -210,6 +210,28 @@ class SAMGOptimizedDataset(Dataset):
         data.geo_mask = torch.cat([torch.ones(n_frag, dtype=torch.float),
                                     torch.zeros(1, dtype=torch.float)])
 
+        # S16 (Rev 23, Muc 69.4): TRANG THAI POOL = so dummy tu do truoc khi phat fragment o vi tri j.
+        #   pool[0] = 0                      (chua dat gi; fragment 0 la goc, khong can diem gan)
+        #   pool[1] = d_0                    (sau khi dat fragment 0, moi dummy cua no deu tu do)
+        #   pool[j] = pool[j-1] + d_{j-1} - 2  voi j >= 2
+        #       (fragment j-1 tieu 1 dummy cua cha, va 1 dummy cua chinh no lam attach_self,
+        #        roi gop vao d_{j-1} - 1 dummy con lai => thay doi rong d_{j-1} - 2)
+        # Vi `sum(d) = 2(L-1)` chinh xac voi moi phan tu THUC (Muc 69.2), `pool[L]` -- vi tri [EOS] --
+        # bang DUNG 0. Do la tin hieu tat dinh cho `[EOS]`, va la thong tin mo hinh Rev 22 thieu.
+        # LUU Y: cong thuc `d - 2` chi dung cho fragment CO CHA. Mot GOC MOI (parent = -1 o t >= 1,
+        # ligand nhieu thanh phan -- 11/119431 vi tri, Muc 45.1) khong tieu dummy cua cha va khong
+        # dung attach_self, nen moi dummy cua no deu tu do: thay doi rong = +d.
+        # Voi cong thuc dung, `pool[L] = sum(d) - 2*(so fragment co cha) = 2(L-c) - 2(L-c) = 0`
+        # voi moi so thanh phan c -- dang thuc 69.2 tong quat hoa dung cho ca rung.
+        d_of = [int((np.asarray(it["atomic_nums"]).reshape(-1) == 0).sum()) for it in sequence_7d]
+        pool = [0]
+        for j, it in enumerate(sequence_7d):
+            pj = it.get("parent", -1)
+            la_goc = (pj is None) or (int(pj) < 0)
+            pool.append(pool[-1] + d_of[j] - (0 if la_goc else 2))
+        # pool co n_frag + 1 phan tu, khop do dai `input_ids`/`target_ids`.
+        data.pool_state = torch.tensor(pool[: n_frag + 1], dtype=torch.long)
+
         # S7 (Rev 21): muc tieu cho ba head kenh lien ket.
         #  * `parent`: 0 = GOC, j+1 = fragment o vi tri j. step0 luu -1 cho goc (Muc 45.1: ligand
         #    nhieu thanh phan co the co nhieu goc).
@@ -414,11 +436,14 @@ class SAMGLightningModule(pl.LightningModule):
         # keo vi tri EOS (pose RONG) vao loss hinh hoc. geo_mask = 1 o fragment that, 0 o EOS va padding.
         geo_mask = torch.nn.utils.rnn.pad_sequence(
             list(torch.split(data_batch.geo_mask, lens)), batch_first=True, padding_value=0.0).to(device)
+        # S16: pool_state. Padding = 0; cac vi tri dem bi `ignore_index=0` cua loss_token loai bo.
+        pool_state = torch.nn.utils.rnn.pad_sequence(
+            list(torch.split(data_batch.pool_state, lens)), batch_first=True, padding_value=0).to(device)
 
         logits_vocab, loss_geo_raw, sampled_7d, _, link_logits = self.generator(
             input_ids, h_target, list_h_anti, target_7d=target_7d, target_mask=target_mask,
             target_ids=target_ids,  # P2c: teacher forcing cho geometric head (xem step4_ligand_generator.py)
-            geo_mask=geo_mask
+            geo_mask=geo_mask, pool_state=pool_state
         )
         # S7: pad muc tieu kenh lien ket bang -100 (= bo qua trong cross_entropy), KHONG bang 0
         # (0 la lop "goc" hop le, pad bang 0 se day mo hinh doan "goc" o moi vi tri dem).
