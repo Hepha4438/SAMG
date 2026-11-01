@@ -1951,3 +1951,73 @@ se khong tach duoc nguyen nhan:
 
 Va hai muc nham vao **pose**, khong nham vao lien thong: C4 (`v_context.detach()`), 6D rotation
 (Zhou et al. 2019). Kenh hinh hoc moi chi dat R^2 tuong duong 0.377 sau 25 epoch (Muc 57.2).
+
+---
+
+# PLAN Rev 23 -- trang thai pool cho head token
+
+Can cu: Muc 68 (92,5% so GOC phu la CUONG BUC, tuc loi head TOKEN) va Muc 69 (`sum(d) = 2(L-1)` la
+DANG THUC; mo hinh khop no o muc trung binh nhung pha vo o 21,42% phan tu).
+
+**KHONG lam** o Rev 23, va ly do: scheduled sampling (chi cham 7,5% so GOC phu, Muc 68.1); dac trung
+kha dung cho head LIEN KET (khong hoc duoc duoi teacher forcing, Muc 67.2); dieu kien hoa
+`attach_parent` theo cha (dung nhung thuoc nhom do trung thuc, khong phai lien thong, Muc 67.1).
+
+## Da lam
+
+| | viec | tep | commit |
+|---|---|---|---|
+| S16 | `data.pool_state` -- pool truoc moi vi tri; cong thuc `+d` cho GOC MOI, `d-2` cho fragment co cha | `step6_trainer.py` | `53b2602` |
+| S17 | `pool_emb` + `semantic_head` nhan `2*hidden`; noi CHI vao head token | `step4_ligand_generator.py` | `aa374e2` |
+| S18 | tinh pool tung buoc luc sinh tu `d_of_token` | `step7_generate_eval.py` | `3f5c4a3` |
+| -- | `check_pool.py`: P1-P5 | moi | `886bd6e` |
+
+## Thu tu chay
+
+```bash
+cd $SAMG && conda activate samg
+
+# 1. KHONG can chay lai step0: pool duoc tinh trong __getitem__ tu `atomic_nums` + `parent`,
+#    ca hai da co trong pkl. Vocab, scaler, fragment_dict GIU NGUYEN.
+#    => P1 (pool[L] == 0) la phep kiem truc tiep rang hai truong do dung.
+
+# 2. Kiem truoc. Chi khi P1-P5 DAT moi di tiep.
+CUDA_VISIBLE_DEVICES="" python -u src/check_pool.py --split valid --n-mol 2000 \
+    2>&1 | tee logs/m50_check_pool.log
+
+# 3. Don checkpoint cu (kien truc doi: semantic_head 256->512 dau vao)
+mkdir -p logs/_keep_rev22
+cp logs/epoch_losses.csv logs/flow_scale_trace.csv logs/generate_eval_test_*.json logs/_keep_rev22/
+rm -rf saved_checkpoints_flow wandb
+rm -f logs/*.log logs/*.csv logs/*.json
+
+# 4. Train
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=1 nohup python -u src/step6_trainer.py \
+    --geo-head maf --batch-size 8 --max-epochs 25 > logs/m51_train_pool.log 2>&1 &
+
+# 5. Danh gia, ba nhanh
+for M in "" "--no-eos"; do
+  python -u src/step7_generate_eval.py --split test --num-samples 5 --assemble channel $M \
+      2>&1 | tee "logs/m52_gen${M:+_noeos}.log"
+done
+```
+
+## Du doan ghi TRUOC khi do (R5)
+
+| dai luong | Rev 22 | du doan Rev 23 | neu sai |
+|---|---|---|---|
+| vi pham `sum(d) < 2(L-1)` | 21,42% | **< 5%** | >= 15% => pool khong duoc dung |
+| GOC CUONG BUC / GOC phu | 92,5% | **< 50%** | van > 80% => nguyen nhan khac |
+| **lien thong** | 0.7585 | **0.88 - 0.93** | < 0.82 => loi ich nho hon tinh toan |
+| `d` trung binh sinh ra | 1.6780 | **~1.68, khong doi** | doi > 0,05 => mo hinh chi chuyen sang thich fragment nhieu nhanh, khong hoc rang buoc |
+| `Token_Loss` ep 24 | 1.8253 | **thap hon** | -- |
+| `Geo_Loss_Unclamped`, 3 loss lien ket | nhu Rev 22 | **khong doi dang ke** | doi nhieu => P5 da sai, pool ro sang duong khac |
+
+Dong `d` trung binh va dong cuoi la hai phep kiem co kha nang that bai quan trong nhat: chung phan
+biet "hoc dung rang buoc" voi "doi phan bo token" va voi "ro sang kenh khac".
+
+## Neu Rev 23 dat
+
+Viec tiep theo **khong** phai lien thong nua ma la **chat luong hoa hoc**: QED 0.4894 so voi tran
+`gt_template` 0.5583, va `Token_Loss` van la cot duy nhat con giam. Khi do moi den
+`attach_parent` theo cha (do trung thuc), C4 va 6D rotation (pose).
