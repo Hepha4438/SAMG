@@ -5291,3 +5291,57 @@ tiep theo** -- dung thong tin mo hinh dang thieu.
 
 Diem 4 la phep kiem co kha nang that bai quan trong nhat: no phan biet "mo hinh hoc dung rang buoc"
 voi "mo hinh chi chuyen sang thich fragment nhieu nhanh".
+
+---
+
+## Muc 70 -- P1-P4 DAT. P5 that bai vi PHEP KIEM sai, khong vi pool ro ri
+
+### 70.1 Bon phep kiem dau dat, va P1 dat o muc manh nhat co the
+
+| | ket qua |
+|---|---|
+| **P1** dang thuc pool | **0/764 vi pham** -- `pool[0]=0`, do dai `L+1`, va **`pool[L]=0` o MOI phan tu** |
+| P2 tinh kha thi | 0/764 -- `pool[j] >= 1` o moi fragment co cha |
+| P3 tran | 0/764; pool lon nhat thay duoc **4** (POOL_MAX = 24, rat du) |
+| P4 pool co doi logits | `max lech = 3.055` (so voi pool+3), `3.562` (so voi "khong biet") -- **DAT** |
+
+P1 la ket qua dang ke nhat: `pool[L] = 0` **chinh xac** o ca 764 phan tu valid. No xac nhan cung luc
+(a) cach tinh pool, (b) truong `parent` cua step0, (c) `atomic_nums`, va (d) **dang thuc 69.2 tong
+quat hoa dung cho ca rung** (ban sua ve GOC MOI). Mot con so bang 0 chinh xac khong the dat duoc bang
+cach khong lam gi.
+
+P3 cung dang ghi: pool thuc te **khong bao gio vuot 4**. Hop voi dang thuc -- `sum(d) = 2(L-1)` keo
+pool ve 0, nen no khong the phinh to. POOL_MAX = 24 la thua, nhung vo hai.
+
+### 70.2 P5 KHONG THE pass voi cach toi viet -- hai nguon ngau nhien
+
+```
+max|loss_geo(pool) - loss_geo(pool+3)|   = 1.127e+00   (phai = 0)
+max|link_logits(pool) - link(pool+3)|    = nan         (phai = 0)
+```
+
+Khong phai pool ro ri. Pool chi di vao `semantic_head`, va trong phep kiem toi **da truyen
+`target_ids`**, nen `tok_emb` lay tu `target_ids` chu khong tu `logits_vocab` -- khong co duong nao
+tu pool sang `geo_in`. Hai con so tren co nguyen nhan khac:
+
+1. **`nan`**: `logits_parent` co `-inf` o cac o bi mask nhan qua. `(-inf) - (-inf) = nan`. Day la
+   **phep tru cua toi**, khong phai gia tri cua mo hinh.
+2. **1.127**: `step4` rut nhieu dequantization **moi lan forward**
+   (`noise = randn_like(target_scaled) * DEQUANT_SIGMA`). Hai lan goi cho `loss_geo` khac nhau du dau
+   vao y nguyen. 1.127 la phuong sai cua dequant, khong phai anh huong cua pool.
+
+Nen P5 **khong the pass** bat ke pool co ro ri hay khong -- mot phep kiem **luon that bai**, doi xung
+voi loi "luon dat" o Muc 8/K1. Ca hai deu la phep kiem khong mang thong tin.
+
+### 70.3 Da sua, va them mot phep kiem tien de
+
+- reset `torch.manual_seed` **truoc tung forward** => nhieu dequant giong nhau;
+- so `link_logits` **chi o o huu han**, va kiem rieng rang **vi tri bi mask phai giong nhau** o ca
+  hai pool (neu khac thi do moi la ro ri that);
+- them phep kiem **tien de**: goi hai lan voi **cung** pool, `loss_geo` phai lech **dung 0**. Neu
+  khong thi viec reset seed khong an va P5 vo nghia -- `ok5` bao gom dieu kien nay.
+
+Day la lan thu tu mot phep kiem cua toi co khiem khuyet (47.2 bien nhieu khong kiem soat; 56.2 loc
+theo ham cua hai bien; 63 `UnboundLocalError` sau khi in; nay la so sanh hai dai luong ngau nhien).
+Bo sung vao R15b: **truoc khi tin mot phep kiem "phai bang 0", phai chay no HAI LAN voi dau vao y
+nguyen va xac nhan no ra 0.** Neu chinh no khong tat dinh thi no khong do duoc gi.
