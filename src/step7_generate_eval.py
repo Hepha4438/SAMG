@@ -425,6 +425,14 @@ def main():
     loader = ProteinLigandDataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
     banned = torch.tensor([vocab.get("[SOS]", 0), vocab.get("[UNK]", 1)], dtype=torch.long, device=device)
     eos_id = None if args.no_eos else vocab.get("[EOS]")
+    # LOI da gap (Muc 63): o che do --no-eos, `eos_id = None` nen vong sinh KHONG dung o [EOS],
+    # nhung [EOS] van nam trong khong gian lay mau => no bi sinh ra NHU MOT FRAGMENT va
+    # `build_mol_channel` chet voi KeyError "khong co template". Da mat 136/300 mau.
+    # --no-eos phai tai lap duong Rev 21, ma vocab Rev 21 KHONG CO [EOS] => phai CAM lay mau no.
+    if args.no_eos and vocab.get("[EOS]") is not None:
+        banned = torch.cat([banned,
+                            torch.tensor([vocab["[EOS]"]], dtype=torch.long, device=device)])
+        print(f"[*] --no-eos: da CAM lay mau [EOS] (id {vocab['[EOS]']}) de tai lap dung duong Rev 21")
     if eos_id is None:
         print("[!] vocab KHONG co [EOS] (hoac --no-eos) -> lay do dai NGAU NHIEN tu phan phoi train."
               "  Day la duong Rev 21; xem Muc 56.1 ve han che cua no.")
