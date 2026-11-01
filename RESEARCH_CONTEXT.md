@@ -4661,3 +4661,87 @@ o giua chang, nen co the cham hon o giua nhung hoi tu tot hon o cuoi. Du doan da
 
 - `Geo_Loss_Unclamped` epoch 24 < **8.20** (Rev 21: 8.2742)
 - `Pocket_Loss` epoch 24 < **2.95** (Rev 21: 3.0052)
+
+---
+
+## Muc 62 -- Gai NLL giai thich xong, va mot phat hien lam GIAM uoc luong R^2 di mot nua
+
+### 62.1 Khong phai saturation. Gia thuyet `m12b_tanh` bi bac
+
+`pinfrac` bang **0 tuyet doi** o sau chieu, moi epoch. Chieu duy nhat khac 0 la `qz`, voi dung mot
+gia tri lap lai: `1.4034359310244326e-06` o cac epoch 13, 17, 18, 19.
+
+`1 / 1.4034e-06 = 712537 = 7 x 101791` -- dung 7 lan so token pose cua tap train. Nghia la mau so dem
+theo cap (token, chieu), va con so do la **dung MOT cap bi pin** trong ca epoch.
+
+`nll_median` va `nll_p99` deu **on dinh**: 8.496 -> 8.3946 va 14.24 -> 14.68. Khong co dau hieu duoi
+nang dan tren ca phan bo.
+
+Vay `Geo_Loss_Unclamped` trung binh 10.884 o epoch 19 (trong khi median 8.39, p99 14.68) chi co the do
+**mot vai mau cuc doan nam ngoai p99**: `Geo_Loss_Unclamped` la trung binh cua **trung binh tung
+batch**, nen mot mau co NLL rat lon keo ca batch len, roi keo trung binh epoch len. Trung voi dung cac
+epoch co `pinfrac_qz != 0`.
+
+Ket luan: **gai la hien tuong mot-mau, khong phai bat on dinh dang lan rong.** Khong can dung huan
+luyen. Nhung cung co nghia `Geo_Loss_Unclamped` la **thong ke kem ben**; tu gio doc `nll_median` thay
+cho no khi theo doi kenh hinh hoc.
+
+### 62.2 PHAT HIEN: 66% do nen cua flow den tu rang buoc chuan hoa quaternion, khong tu tui
+
+| chieu | log sigma | sigma | R^2 chieu |
+|---|---|---|---|
+| d | -0.2871 | 0.7504 | 0.4368 |
+| theta | -0.0343 | 0.9663 | 0.0664 |
+| phi | -0.1028 | 0.9023 | 0.1858 |
+| qw | -0.0561 | 0.9454 | 0.1061 |
+| qx | -0.0599 | 0.9419 | 0.1129 |
+| qy | -0.0780 | 0.9250 | 0.1444 |
+| **qz** | **-1.2121** | **0.2976** | **0.9114** |
+
+`qz` duoc nen manh gap **12-35 lan** moi chieu quaternion khac, va mot minh no chiem **66%** tong do
+nen (`-1.2121` tren tong `-1.8303`).
+
+Nguyen nhan khong phai mo hinh hoc tot: `DIM_NAMES = [d, theta, phi, qw, qx, qy, qz]` va
+`permutation ARN = [0..6]` (dong nhat), nen `qz` la chieu **CUOI CUNG** trong thu tu tu hoi quy. Luc
+du doan `qz`, flow da biet `qw, qx, qy`, va quaternion la **don vi**:
+
+```
+qz^2 = 1 - qw^2 - qx^2 - qy^2
+```
+
+tuc `|qz|` **duoc xac dinh hoan toan**, chi con dau la tu do. Flow dang hoc **rang buoc dai so cua
+chinh bieu dien**, khong phai thong tin tu tui protein.
+
+Va dieu nay giai thich luon viec pin: khi `1 - qw^2 - qx^2 - qy^2 ~ 0` thi `qz ~ 0`, sigma dieu kien
+tien ve 0 va cham clamp. Dung mot mau moi epoch. **Mot co che giai thich ca hai quan sat.**
+
+### 62.3 He qua: cac uoc luong R^2 truoc day bi THOI PHONG
+
+| | gap/chieu | sigma | R^2 tuong duong |
+|---|---|---|---|
+| ca 7 chieu (nhu toi da tinh o 46.2, 57.2) | 0.2615 | 0.7699 | **0.4072** |
+| **bo `qz`, 6 chieu** | 0.1030 | 0.9021 | **0.1862** |
+
+Doi chieu **tran cua probe tuyen tinh, Muc 43.6: R^2 = 0.2299.** Con so 0.1862 khop voi no **tot hon
+nhieu** so voi 0.4072. Hai phep do doc lap gio cung chi mot muc ~0,19-0,23.
+
+Nen phai sua lai hai cho:
+- **Muc 46.2** (R^2 ~ 0.346) va **Muc 57.2** (R^2 ~ 0.377): ca hai **thoi phong**, vi gop `qz` -- mot
+  chieu ma 91% do du doan duoc la **hien vat cua bieu dien**. Gia tri dung vao khoang **0.19**.
+- Ket luan dinh tinh cua chung **manh hon chu khong yeu di**: dieu kien hoa theo tui giai thich duoc
+  it hon mot phan nam phuong sai tu the, khong phai mot phan ba. Lap luan o Muc 43.6 (sua C4 hoan hao
+  van khong vuot nguong 1,5 A) va quyet dinh chon huong (b) o 43.7 **duoc cung co**.
+
+### 62.4 Bai hoc ve phep do, va dieu KHONG duoc suy ra
+
+Mot NLL tinh tren bieu dien **du thua** (4 so cho 3 bac tu do) se luon trong dep hon muc xung dang,
+vi mo hinh an diem o rang buoc dai so. He qua thuc hanh:
+
+1. **Khong duoc so NLL hinh hoc giua hai cach tham so hoa vong quay khac nhau.** Neu Rev 23 doi sang
+   6D (Zhou et al. 2019) thi `Geo_Loss` cua no **khong so sanh duoc** voi con so hien tai -- day la
+   lan thu tu cung nguyen tac (46.1 vocab, 53.2 kien truc, 61.2 mau so, nay la tham so hoa).
+2. Khi theo doi kenh hinh hoc, doc **sai so goc quay** (Muc 43.3: 126,5 do so voi 132,3 do cua ngau
+   nhien dong deu trong SO(3)) hoac `nll_median`, **khong** doc `Geo_Loss` tong.
+3. **KHONG duoc suy** rang 6D se sua duoc dieu nay: 6D cung du thua (6 so cho 3 bac tu do). Dieu
+   phat hien nay noi la **phep do bi thoi phong**, chu khong noi bieu dien nao tot hon. Muon do
+   sach thi phai do tren SO(3) truc tiep, hoac bo chieu phu thuoc ra khoi NLL.
