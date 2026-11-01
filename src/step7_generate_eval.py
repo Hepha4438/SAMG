@@ -507,7 +507,6 @@ def main():
     n_conn = sum(1 for d_ in diags if d_["n_manh"] == 1)
     if eos_id is not None:
         print(f"\n  Dung bang [EOS] (khong cham --max-len): {n_eos}/{n_gen} = {n_eos / max(n_gen, 1):.4f}")
-        out["eos_rate"] = n_eos / max(n_gen, 1)
     print(f"\n  Validity (chi sanitize duoc):        {len(ok)}/{n_gen} = {len(ok) / max(n_gen, 1):.4f}")
     print(f"  Validity (sanitize VA lien thong):   {n_conn}/{n_gen} = {n_conn / max(n_gen, 1):.4f}"
           f"   <- con so that")
@@ -515,6 +514,9 @@ def main():
         print(f"      loi: {k[:74]:76} x{v}")
     out = {"split": args.split, "head": head, "ckpt": os.path.basename(ckpt),
            "assemble": args.assemble, "link_mode": args.link_mode, "n_pocket": n_pocket,
+           # Muc 63: truoc day gan vao `out` TRUOC khi `out` ton tai -> UnboundLocalError lam
+           # sap ca lan chay, ngay sau khi da in duoc con so quan trong nhat.
+           "eos_rate": (n_eos / max(n_gen, 1)) if eos_id is not None else None,
            "n_gen": n_gen, "validity_sanitize": len(ok) / max(n_gen, 1),
            "validity_connected": n_conn / max(n_gen, 1), "temperature": args.temperature}
     if ok:
