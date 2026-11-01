@@ -107,14 +107,27 @@ def main():
     iid, tid = P(batch.input_ids, 0), P(batch.target_ids, 0)
     t7, gm = P(batch.target_7d, 0.0), P(batch.geo_mask, 0.0)
     ps = P(batch.pool_state, 0)
+    # P5 doi hoi so sanh hai forward BIT-GIONG-NHAU tru dau vao pool. Hai nguon ngau nhien phai
+    # xu ly, neu khong phep kiem khong the pass (da mac dung loi nay mot lan, xem Muc 70):
+    #  (a) `step4` rut nhieu dequantization moi forward: `noise = randn_like(...) * DEQUANT_SIGMA`
+    #      => phai reset seed TRUOC tung lan goi.
+    #  (b) `logits_parent` co -inf o cac o bi mask; `(-inf) - (-inf) = nan` => chi so o o HUU HAN.
+    def run(pool_arg):
+        torch.manual_seed(20231102)
+        with torch.no_grad():
+            return model.generator(iid, h_t, [], target_7d=t7, target_mask=t_mask,
+                                    target_ids=tid, geo_mask=gm, pool_state=pool_arg)
+
     with torch.no_grad():
         h_t, t_mask, _, _ = model.build_h_target(batch)
-        out_a = model.generator(iid, h_t, [], target_7d=t7, target_mask=t_mask,
-                                target_ids=tid, geo_mask=gm, pool_state=ps)
-        out_b = model.generator(iid, h_t, [], target_7d=t7, target_mask=t_mask,
-                                target_ids=tid, geo_mask=gm, pool_state=ps + 3)
-        out_n = model.generator(iid, h_t, [], target_7d=t7, target_mask=t_mask,
-                                target_ids=tid, geo_mask=gm, pool_state=None)
+    out_a = run(ps)
+    out_b = run(ps + 3)
+    out_n = run(None)
+    # Chung minh viec reset seed co tac dung: hai lan goi CUNG pool phai cho loss_geo Y NGUYEN.
+    out_a2 = run(ps)
+    d_rep = float((out_a[1] - out_a2[1]).abs().max())
+    print(f"\n[*] kiem tien de: hai lan goi cung pool -> max|loss_geo lech| = {d_rep:.3e}"
+          f"  ({'tat dinh, phep kiem co hieu luc' if d_rep == 0.0 else 'VAN NGAU NHIEN -- P5 vo nghia'})")
 
     print("\n" + "=" * 86 + "\nP4: pool co THUC SU doi logits_vocab khong\n" + "=" * 86)
     dab = float((out_a[0] - out_b[0]).abs().max())
@@ -126,11 +139,20 @@ def main():
 
     print("\n" + "=" * 86 + "\nP5: pool KHONG duoc anh huong kenh hinh hoc va lien ket\n" + "=" * 86)
     dgeo = float((out_a[1] - out_b[1]).abs().max())
-    dlink = max(float((out_a[4][k] - out_b[4][k]).abs().max())
-                for k in ("parent", "attach_self", "attach_parent"))
+    dlink = 0.0
+    for k in ("parent", "attach_self", "attach_parent"):
+        A, B = out_a[4][k], out_b[4][k]
+        fin = torch.isfinite(A) & torch.isfinite(B)
+        # cac o bi mask phai bi mask GIONG NHAU o ca hai; neu khac thi do la ro ri that
+        if not torch.equal(torch.isfinite(A), torch.isfinite(B)):
+            dlink = float("inf")
+            print(f"    [!] {k}: vi tri bi mask KHAC nhau giua hai pool -- ro ri that")
+            continue
+        if fin.any():
+            dlink = max(dlink, float((A[fin] - B[fin]).abs().max()))
     print(f"    max|loss_geo(pool) - loss_geo(pool+3)|   = {dgeo:.3e}   (phai = 0)")
-    print(f"    max|link_logits(pool) - link(pool+3)|    = {dlink:.3e}   (phai = 0)")
-    ok5 = dgeo == 0.0 and dlink == 0.0
+    print(f"    max|link_logits(pool) - link(pool+3)|    = {dlink:.3e}   (phai = 0; chi o o huu han)")
+    ok5 = (d_rep == 0.0) and dgeo == 0.0 and dlink == 0.0
     print(f"    => P5 {'DAT' if ok5 else 'KHONG DAT: pool dang ro sang duong khac, se lan nguyen nhan'}")
 
     with torch.no_grad():
