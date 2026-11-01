@@ -130,7 +130,7 @@ def empirical_lengths(st, pkl_by_id):
 
 @torch.no_grad()
 def generate_one(model, h_target, target_mask, vocab_size, length, temperature, device, banned,
-                 eos_id=None, max_len=None):
+                 eos_id=None, max_len=None, d_of_token=None):
     """Lay mau TOAN BO chuoi token truoc, roi MOT forward cuoi voi target_ids de sinh 7D dung tren
     token cua chinh vi tri do (Muc 42.2). Ton L+1 forward thay vi 2L."""
     sos = torch.zeros(1, 1, dtype=torch.long, device=device)      # [SOS] = id 0
@@ -142,8 +142,15 @@ def generate_one(model, h_target, target_mask, vocab_size, length, temperature, 
     # duoc day la bien quyet dinh cua do dut: Pearson(L - L_true, lien thong) = -0.3834.
     # `length` chi con duoc dung khi vocab chua co [EOS] (duong cu, de tuong thich nguoc).
     n_steps = (max_len if eos_id is not None else length)
+    # S18 (Rev 23): trang thai pool, tinh TUNG BUOC tu chinh cac token da sinh.
+    #   pool[0] = 0;  pool[k+1] = pool[k] + d_k - (2 neu k >= 1 else 0)
+    # Pool la ham tat dinh cua tien to, nen tinh duoc luc sinh ma khong can biet gi ve tuong lai.
+    pool = [0]
     for _ in range(n_steps):
-        logits, _, _, _, _lk = model.generator(inp, h_target, [], target_mask=target_mask)
+        ps = (torch.tensor([pool], dtype=torch.long, device=device)
+              if d_of_token is not None else None)
+        logits, _, _, _, _lk = model.generator(inp, h_target, [], target_mask=target_mask,
+                                               pool_state=ps)
         p = torch.softmax(logits[:, -1, :] / temperature, dim=-1)
         p[:, banned] = 0.0
         p = p / p.sum(dim=-1, keepdim=True).clamp_min(1e-12)
@@ -154,14 +161,20 @@ def generate_one(model, h_target, target_mask, vocab_size, length, temperature, 
             break
         toks.append(tid)
         inp = torch.cat([inp, nxt], dim=1)
+        if d_of_token is not None:
+            k = len(toks) - 1
+            pool.append(pool[-1] + int(d_of_token[tid]) - (2 if k >= 1 else 0))
     if not toks:
         raise ValueError("mo hinh sinh [EOS] ngay o buoc dau -- chuoi rong")
     # `toks` KHONG chua [EOS]: no khong co pose va khong co cha, nen khong duoc dua vao forward
     # tinh 7D/link. Dung voi luc huan luyen, o do vi tri EOS bi geo_mask = 0 va link = -100 loai ra.
     tgt = torch.tensor([toks], dtype=torch.long, device=device)
     inp_final = torch.cat([sos, tgt[:, :-1]], dim=1)
+    ps_f = (torch.tensor([pool[: len(toks)]], dtype=torch.long, device=device)
+            if d_of_token is not None else None)
     _, _, sampled_7d, _, link_logits = model.generator(inp_final, h_target, [],
-                                                       target_mask=target_mask, target_ids=tgt)
+                                                       target_mask=target_mask, target_ids=tgt,
+                                                       pool_state=ps_f)
     # S8: link_logits lay tu DUNG forward nay -- cac head lien ket deu doc `geo_in`/`frag_repr`
     # dung tren target_ids, giong het luc huan luyen (teacher forcing tren token).
     return toks, sampled_7d[0].double().cpu().numpy(), link_logits, hit_eos
@@ -445,6 +458,12 @@ def main():
     from datasets.pl_data import ProteinLigandDataLoader
     loader = ProteinLigandDataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
     banned = torch.tensor([vocab.get("[SOS]", 0), vocab.get("[UNK]", 1)], dtype=torch.long, device=device)
+    # S18: d (so dummy) theo id token, de tinh pool luc sinh. Token khong co template -> d = 0.
+    d_of_token = np.zeros(len(vocab), dtype=np.int64)
+    for _tid, _smi in inv_vocab.items():
+        _e = frag_dict.get(_smi)
+        if _e is not None:
+            d_of_token[_tid] = int((np.asarray(_e["atomic_nums"]).reshape(-1) == 0).sum())
     eos_id = None if args.no_eos else vocab.get("[EOS]")
     # LOI da gap (Muc 63): o che do --no-eos, `eos_id = None` nen vong sinh KHONG dung o [EOS],
     # nhung [EOS] van nam trong khong gian lay mau => no bi sinh ra NHU MOT FRAGMENT va
@@ -491,7 +510,7 @@ def main():
             try:
                 toks, poses, link_logits, hit_eos = generate_one(
                     model, h_target, target_mask, len(vocab), L, args.temperature, device, banned,
-                    eos_id=eos_id, max_len=args.max_len)
+                    eos_id=eos_id, max_len=args.max_len, d_of_token=d_of_token)
                 n_eos += int(hit_eos)
                 if args.assemble == "channel":
                     mol, diag = build_mol_channel(toks, poses, inv_vocab, frag_dict,
