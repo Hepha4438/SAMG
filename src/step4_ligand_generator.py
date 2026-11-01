@@ -25,6 +25,11 @@ DEQUANT_SIGMA = 0.1
 # S6 (Rev 21): so lop cua head "diem gan". Do duoc o Muc 44.4: max 5 dummy/fragment, p99 = 3
 # (tren 1.894 phan tu). Lay 8 de du bien an toan cho fragment hiem chua gap.
 MAX_ATTACH = 8
+# S17 (Rev 23): tran cua trang thai pool khi nhung. Pool = d0 + sum(d_i - 2) tren tien to da sinh.
+# Clamp o 24: d toi da do duoc la 5 (Muc 44.4) va L toi da tren train la 23, nhung pool thuc te nho
+# hon nhieu vi `sum(d) = 2(L-1)` keo no ve 0. `check_pool.py` dem so lan clamp -- neu khac 0 dang ke
+# thi phai nang tran, khong duoc de im.
+POOL_MAX = 24
 
 class PositionalEncoding(nn.Module):
     def __init__(self, hidden_dim, max_len=5000):
@@ -58,8 +63,27 @@ class DualStreamLigandGenerator(nn.Module):
         self.ar_decoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         self.attention_hub = MultiDifferentialCrossAttention(hidden_dim=hidden_dim, num_heads=num_heads, beta=1.5)
         
+        # S17 (Rev 23, Muc 69.4): head token nhan them TRANG THAI POOL -- so dummy tu do con lai
+        # cua phan tu dang dung, TRUOC khi phat fragment o vi tri nay.
+        #
+        # Can cu: moi dummy la mot lien ket bi cat, moi lien ket noi dung hai fragment, nen voi moi
+        # phan tu THUC `sum(d_i) = 2(L-1)` CHINH XAC (Muc 69.2). Pool doi `d - 2` moi buoc va ve
+        # DUNG 0 khi phan tu xong. Do do pool (a) du doan `[EOS]` mot cach tat dinh va (b) rang buoc
+        # `d` cua fragment tiep theo. Mo hinh Rev 22 tai tao phan bo BIEN cua `d` gan nhu hoan hao
+        # nhung pha vo rang buoc nay o 21,42% phan tu (Muc 69.3).
+        #
+        # Pool la mot ham TAT DINH cua tien to da sinh, nen dua no vao khong he ro ri thong tin --
+        # chi mien cho mo hinh phai tu tich luy mot so nguyen qua nhieu buoc, viec ma transformer lam
+        # kem. Cung mot thiet bi voi bo giai ma cay cua JT-VAE (Jin et al. 2018, ICML), noi frontier
+        # cua DFS duoc duy tri TUONG MINH thay vi suy lai tu chuoi; pool la ban thu gon vo huong cua
+        # frontier do.
+        #
+        # Noi CHI vao `semantic_head`, KHONG vao `v_context`: nho vay `geo_in` va ba head lien ket
+        # nhan dau vao y nguyen nhu Rev 22, nen chenh lech do duoc thuoc ve head token chu khong lan
+        # sang kenh hinh hoc (R5).
+        self.pool_emb = nn.Embedding(POOL_MAX + 2, hidden_dim)   # lop cuoi = "khong biet"
         self.semantic_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.SiLU(),
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, vocab_size)
@@ -96,7 +120,7 @@ class DualStreamLigandGenerator(nn.Module):
         self.register_buffer('scale_factors', scale_factors.clone().detach().view(1, 7))
 
     def forward(self, input_ids, h_target, list_h_anti, target_7d=None, target_mask=None,
-                target_ids=None, geo_mask=None):
+                target_ids=None, geo_mask=None, pool_state=None):
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
 
@@ -111,7 +135,12 @@ class DualStreamLigandGenerator(nn.Module):
         v_context, attn_weights = self.attention_hub(h_ar, h_target, list_h_anti, target_mask=target_mask)
         
         # Luồng 1: Semantic
-        logits_vocab = self.semantic_head(v_context)
+        # S17: pool_state [B, T] (so nguyen >= 0). None => lop "khong biet" (tuong thich nguoc).
+        if pool_state is None:
+            pidx = torch.full((batch_size, seq_len), POOL_MAX + 1, dtype=torch.long, device=device)
+        else:
+            pidx = pool_state.to(device=device, dtype=torch.long).clamp(0, POOL_MAX)
+        logits_vocab = self.semantic_head(torch.cat([v_context, self.pool_emb(pidx)], dim=-1))
         
         # Luồng 2: Geometric Flow (Kèm Detach bảo vệ SA Score)
         v_context_detached = v_context.detach()
