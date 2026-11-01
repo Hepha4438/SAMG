@@ -4868,3 +4868,75 @@ Ty le sanitize gio gan nhu bang nhau (0.9733 so voi 0.9767), nen hieu ung chon l
 
 Canh bao: day la 60 hoc, khong phai 255. Chi so hoa hoc dao dong manh hon lien thong vi chung la
 trung binh cua bien lien tuc tren mot tap nho. Khong dung bang nay cho bao cao.
+
+---
+
+## Muc 65 -- Rev 22 huan luyen xong, 25 epoch. Phan quyet hai du doan ve cosine
+
+### 65.1 Mot dat, mot KHONG DAT -- va co che toi neu ra lai nguoc
+
+| du doan (ghi truoc, `plan.md`) | nguong | thuc te | phan quyet |
+|---|---|---|---|
+| `Pocket_Loss` ep 24 | < 2.95 | **2.9390** (Rev 21: 3.0052) | **DAT** |
+| `Geo_Loss_Unclamped` ep 24 | < 8.20 | **~8.300** (Rev 21: 8.2742) | **KHONG DAT** |
+
+(`ep 24 = 24.9281` bi nhiem gai; cac epoch sach ke do: ep 20 = 8.3257, ep 22 = 8.3008,
+ep 23 = 8.3006.)
+
+Doi chieu tung epoch tren cot sach:
+
+| ep | Rev 22 | Rev 21 | lech |
+|---|---|---|---|
+| 14 | 8.4668 | 8.6110 | **-0.144** |
+| 16 | 8.4070 | 8.5828 | **-0.176** |
+| 17 | 8.4005 | 8.5124 | -0.112 |
+| 20 | 8.3257 | 8.3702 | -0.045 |
+| 22 | 8.3008 | 8.3154 | -0.015 |
+| 23 | 8.3006 | 8.3006 | 0.000 |
+| 24 | (gai) | 8.2742 | -- |
+
+**Rev 22 di truoc o giua chang roi bi bat kip o cuoi.**
+
+O Muc 61.3 toi viet: *"cosine ha LR thap hon Rev 21 o giua chang, nen co the cham hon o giua nhung
+hoi tu tot hon o cuoi."* Du lieu cho dieu **nguoc lai**: Rev 22 **nhanh hon** o giua (-0.176 o ep 16)
+va **khong tot hon** o cuoi. Co che dung la: cosine ha LR deu nen tien nhanh khi con dung LR vua,
+nhung o nam epoch cuoi LR xuong 1.04e-05 -> 1.39e-06, qua nho de tien them -- trong khi Rev 21 giu
+1e-4 den ep 20 roi moi ha mot nua, nen no van con bien do de bat kip.
+
+Ket luan ve cosine: **loi ich co that nhung chi o giua chang, va khong giu duoc den cuoi tren kenh
+hinh hoc.** Tren `Pocket_Loss` thi giu duoc (-0.066). Day la ket qua **trai chieu**, khong phai mot
+thang loi, va phai ghi dung nhu vay.
+
+Neu lam lai: `eta_min` 1e-6 la **qua thap**. Nen dat quanh 1e-5, hoac dung `T_max` lon hon so epoch
+thuc (ha mot phan cua chu ky cosine) de LR cuoi khong chet.
+
+### 65.2 Gai NLL tang gap sau lan, va la BLOW-UP so hoc chu khong phai mau kho
+
+| ep | mean unclamped | vuot muc sach ~8.30 | NLL cua mau gay ra (gia su 1 mau) |
+|---|---|---|---|
+| 19 | 10.8840 | 2.584 | ~44,000 |
+| 21 | 25.3538 | 17.054 | **~293,000** |
+| 24 | 24.9281 | 16.628 | **~286,000** |
+
+(2150 batch x 8 mau; mot mau NLL = X them `X/(8*2150)` vao trung binh epoch.)
+
+NLL co bac 10^5 **khong phai mot mau kho** -- NLL cua mot mau thuc te nam quanh 8-15 (xem
+`nll_p99 = 14.68`). Day la **blow-up so hoc** cua MAF, va no **tang gap sau lan** tu ep 19 den ep 21.
+
+`Geo_Loss` (clamped) khong thay gi (7.0009 o ep 24) nen gradient duoc bao ve, va huan luyen khong
+sup. Nhung day la mot diem gion can ghi lai: **neu Rev 23 dong vao duong hinh hoc thi phai xu ly
+truoc**, va `Geo_Loss_Unclamped` **khong dung lam chi so** (dung `nll_median`, Muc 62.1).
+
+### 65.3 Ba head lien ket: hoi tu, dung nhu du bao
+
+| | ep 10 | ep 19 | ep 24 | perplexity ep 24 |
+|---|---|---|---|---|
+| Parent | 0.0202 | 0.0114 | **0.0103** | 1.0104 |
+| AttachSelf | 0.4586 | 0.4500 | 0.4483 | 1.5656 |
+| AttachParent | 0.6630 | 0.6557 | 0.6546 | 1.9245 |
+
+Tu ep 19 den ep 24, ca ba doi khong dang ke. Xac nhan du bao o Muc 64/phan tra loi: **lien thong o
+ep 24 se khong khac ep 19**, nen con so 0.7671 cua ban xem truoc van la uoc luong dung cho ban cuoi.
+
+`Token_Loss` 1.8860 (ep 19) -> 1.8253 (ep 24), cham dan (-0.0068 o buoc cuoi). Day la cot duy nhat
+nam epoch cuoi con mua duoc gi, va no mua **chat luong hoa hoc**, khong mua lien thong.
