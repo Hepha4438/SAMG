@@ -4745,3 +4745,126 @@ vi mo hinh an diem o rang buoc dai so. He qua thuc hanh:
 3. **KHONG duoc suy** rang 6D se sua duoc dieu nay: 6D cung du thua (6 so cho 3 bac tu do). Dieu
    phat hien nay noi la **phep do bi thoi phong**, chu khong noi bieu dien nao tot hon. Muon do
    sach thi phai do tren SO(3) truc tiep, hoac bo chieu phu thuoc ra khoi NLL.
+
+---
+
+## Muc 64 -- `[EOS]` co tac dung lon. Nhung CO CHE khong phai cai toi nghi, lan thu hai
+
+**Ban xem truoc**, checkpoint epoch 019 (`val_total_loss = 13.8886`), 60 hoc / 300 mau. **Khong phai
+ket qua cuoi cua Rev 22** -- du doan ghi truoc danh cho mo hinh epoch 24. Ghi rieng de khong co hai
+lan ban vao cung mot du doan.
+
+### 64.1 Ket qua
+
+Cung checkpoint, cung 60 hoc, cung seed, chi khac mot co:
+
+| | lien thong | SE |
+|---|---|---|
+| **co `[EOS]`** | **0.7671** | 0.0247 |
+| `--no-eos` (doi chung) | 0.4812 | 0.0292 |
+| Rev 21 (toan 255 hoc) | 0.5193 | -- |
+
+Hieu **+0.2859 +/- 0.0383 = 7,5 SE**. `eos_rate = 300/300 = 1.0000` -- mo hinh **luon** tu dung, khong
+lan nao cham `--max-len`.
+
+`so GOC trung binh`: 1.26 (co `[EOS]`) so voi 1.79 (doi chung) so voi 1.57 (Rev 21).
+
+Du doan ghi truoc o `plan.md` la **0.62-0.70**; thuc te **0.7671**, **vuot bien tren**. Du doan dung
+huong va **bao thu** ve do lon.
+
+### 64.2 Nhanh doi chung xac nhan cosine KHONG dong gop
+
+`--no-eos` tai lap Rev 21 trong sai so o moi khoang L:
+
+| L | Rev22 `--no-eos` | Rev21 | lech/SE |
+|---|---|---|---|
+| 2-3 | 0.9394 | 0.9345 | 0.1 |
+| 4-5 | 0.6757 | 0.6450 | 0.7 |
+| 6-7 | 0.3273 | 0.4223 | 1.5 |
+| 8-10 | 0.2297 | 0.2341 | 0.1 |
+| toan bo | 0.4812 | 0.5193 | 1.3 |
+
+Nen phep tach qua hai truc (Muc 57.3) **hop le**: toan bo +0.286 thuoc ve `[EOS]`, khong lan voi
+cosine. Cosine thi doc o truc khac (`nll_median`, `Pocket_Loss`) va da duoc xac nhan rieng o Muc 61.3.
+
+### 64.3 CO CHE: khong phai "khop L voi L_true". Muc 56 bi sua lai
+
+Du doan cua toi (Muc 56.3, +0.127, tran 0.6460) dua tren mot co che cu the: `[EOS]` lam `L` khop
+`L_true`, va o `DELTA = 0` lien thong la 0.6460. Thuc te **vuot xa** con so do, nen co che phai khac.
+
+**Phan bo `DELTA` gan nhu khong doi giua hai nhanh:**
+
+| DELTA | `--no-eos` | co `[EOS]` |
+|---|---|---|
+| <= -3 | 28% | 30% |
+| -2..-1 | 26% | 27% |
+| 0 | 8% | 10% |
+| +1..+2 | 17% | 17% |
+| +3..+5 | 14% | 12% |
+| >= +6 | 6% | 4% |
+
+**Nhung lien thong tang o MOI khoang DELTA:**
+
+| DELTA | `--no-eos` | co `[EOS]` | muc tang |
+|---|---|---|---|
+| <= -3 | 0.7470 | 0.9310 | +0.184 |
+| -2..-1 | 0.5974 | 0.8333 | +0.236 |
+| **0** | **0.4783** | **0.6552** | **+0.177** |
+| +1..+2 | 0.3200 | 0.6471 | +0.327 |
+| +3..+5 | 0.1463 | 0.5588 | +0.413 |
+| >= +6 | 0.0000 | 0.5385 | **+0.539** |
+
+Neu `[EOS]` lam viec bang cach khop do dai thi muc tang phai **bang 0 o `DELTA = 0`** -- hai nhanh
+khi do co cung `L = L_true`. Thuc te tang **+0.177**. Va tang **lon nhat** o `DELTA >= +6`, tu
+0.0000 len 0.5385.
+
+**Co che dung:** bien quyet dinh khong phai "`L` khop `L_true`" ma **"`L` khop do dai mo hinh TU MUON
+dung"**. O nhanh `--no-eos`, `[EOS]` bi cam lay mau nen mo hinh **bi buoc tiep tuc phat fragment** qua
+diem no muon dung; cac fragment thua do nam ngoai phan bo no da hoc, khong gan duoc vao dau, va
+`decode_links` buoc chung thanh GOC. O nhanh co `[EOS]`, moi fragment phat ra deu la fragment mo hinh
+"co y", bat ke chuoi dai hay ngan so voi ligand tham chieu.
+
+`DELTA` chi la **bien dai dien** tuong quan voi dieu do: trong boi canh Rev 21 (do dai rut tham tu
+phan bo bien), `DELTA` lon dong nghia voi bi buoc di xa diem dung mong muon. Do la ly do Muc 56.1 thay
+`Pearson(DELTA, ·) = -0.3834` trong khi `Pearson(L_true, ·) = +0.0365`. Ket luan "(i) chiem uu the"
+o Muc 56.1 **dung**, nhung dien giai "(i) = L khong khop tung hoc" **sai**: (i) la *L khong khop y
+dinh cua mo hinh*.
+
+Bang theo L noi cung dieu, va ro hon:
+
+| L | `--no-eos` | co `[EOS]` | muc tang |
+|---|---|---|---|
+| 2-3 | 0.9394 | 0.9692 | +0.030 |
+| 4-5 | 0.6757 | 0.8587 | +0.183 |
+| 6-7 | 0.3273 | 0.6538 | +0.327 |
+| 8-10 | 0.2297 | 0.5909 | +0.361 |
+| 11-14 | 0.0000 | 0.4615 | +0.462 |
+
+Muc tang **lon dan theo L**, dung voi co che "bi buoc di qua diem dung": chuoi cang dai thi so fragment
+bi cuong buc cang nhieu.
+
+### 64.4 Day la lan thu hai toi du doan dung huong nhung sai co che
+
+Muc 55.2: du doan dung ca ba phan ve tuong quan, nhung co che ("phan tu dai thi kho hon") sai.
+Muc 64: du doan dung huong va con bao thu, nhung co che ("khop `L_true`") sai.
+
+Cung mot dang: toi gan mot **bien do duoc** (`L`, roi `DELTA`) cho mot **nguyen nhan** ma bien do chi
+tuong quan voi no. Bo sung vao R15b: khi mot bien du doan tot, phai hoi *no la nguyen nhan hay la dai
+dien cua nguyen nhan*, va thiet ke phep do co the tach hai kha nang -- o day phep tach la
+**so lien thong tai `DELTA = 0`**, va no co san trong chinh bang da in.
+
+### 64.5 Chi so hoa hoc, va mot canh bao
+
+| | co `[EOS]` | `--no-eos` | tran `gt_template` |
+|---|---|---|---|
+| QED | 0.5034 | 0.4730 | 0.5583 |
+| SA_raw | 3.2878 | 3.3553 | 2.8077 |
+| logP | 1.4975 | 1.2769 | 1.3972 |
+| Lipinski | 4.4760 | 4.3720 | 4.5685 |
+| Novelty | 0.9863 | 1.0000 | -- |
+
+Ty le sanitize gio gan nhu bang nhau (0.9733 so voi 0.9767), nen hieu ung chon loc o Muc 54.5
+**khong con** -- bang nay doc duoc. QED 0.5034 so voi tran 0.5583: con cach 0.055, truoc la 0.095.
+
+Canh bao: day la 60 hoc, khong phai 255. Chi so hoa hoc dao dong manh hon lien thong vi chung la
+trung binh cua bien lien tuc tren mot tap nho. Khong dung bang nay cho bao cao.
