@@ -5198,3 +5198,96 @@ Ban sua **dung** la cho head TOKEN **biet trang thai pool** khi chon fragment ti
 truong hop o Muc 67.2, dac trung nay **HOC DUOC duoi teacher forcing**: trong mot phan tu that, pool
 bien thien theo tung buoc DFS va rang buoc that su cai gi co the den tiep -- nen dac trung mang thong
 tin phan biet. Day la diem khac biet quan trong giua head token va cac head lien ket.
+
+---
+
+## Muc 69 -- Du doan 68.2 SAI ca hai phan. Chan doan dung: khop phan bo BIEN, pha vo rang buoc TUNG PHAN TU
+
+### 69.1 Phan quyet
+
+| | du doan (Muc 68.2) | thuc te | |
+|---|---|---|---|
+| `d` trung binh sinh ra | **thap hon** train | 1.6780 so voi 1.6681 -> **cao hon** +0.0099 | **SAI** |
+| ty le `d = 1` | **cao hon** train >= 5 diem % | 0.3728 so voi 0.3842 -> **thap hon** -0.0114 | **SAI** |
+
+Sai ca hai phan, va ca hai sai so deu duoi 1,2 diem phan tram. **Hai phan bo gan nhu trung nhau.**
+Gia thuyet "mo hinh phat qua nhieu fragment dau mut" bi **bac**.
+
+Theo dung tien-dang-ky o 68.2: *"Neu hai phan bo gan nhu trung nhau thi ... nguyen nhan nam o thu tu
+phat chu khong phai o ty le."* Dung mot nua -- nhung chan doan that con sach hon the.
+
+### 69.2 `sum(d) = 2(L-1)` la mot DANG THUC, khong phai mot xu huong
+
+Moi nguyen tu dummy la **mot lien ket bi cat**, va moi lien ket bi cat noi **dung hai** fragment. Nen
+voi mot cay `L` dinh (`L-1` canh), moi phan tu **thuc**:
+
+```
+sum(d_i) = 2(L - 1)        CHINH XAC
+mean d   = 2 - 2/L         CHINH XAC
+```
+
+`mean d` **khong phai mot tham so tu do** -- no bi do dai khoa cung. Kiem bang du lieu: trung binh
+`d` co trong so theo token phai bang `2 - 2/E[L]`:
+
+| | E[L] | `2 - 2/E[L]` | do duoc | lech |
+|---|---|---|---|---|
+| train | 5.92 | 1.6622 | 1.6681 | +0.0059 |
+| sinh ra | 6.31 | 1.6830 | 1.6780 | -0.0050 |
+
+Ca hai khop trong **0,006**. Nen mo hinh **khop dang thuc o muc trung binh** -- va do chinh la van de.
+
+### 69.3 Chan doan: phan bo BIEN dung, rang buoc TUNG PHAN TU bi pha
+
+Mo hinh tai tao phan bo bien cua `d` gan nhu hoan hao, va tai tao quan he `mean d = 2 - 2/E[L]` o muc
+tong the. Nhung **21,42% phan tu co `sum(d) < 2(L-1)`** -- tuc **khong the lien thong** bat ke head
+`parent` tot den may. Mo hinh lay `d` **gan nhu doc lap voi `L`**, trong khi du lieu that co `d` va
+`L` **khoa chat voi nhau theo tung phan tu**.
+
+Hau qua dinh luong: voi `mean d = 1.678` co dinh va doc lap voi `L`, dieu kien `mean d >= 2 - 2/L`
+chi thoa khi
+
+```
+L <= 2 / (2 - 1.678) = 6.21
+```
+
+Doi chieu lien thong theo `L`:
+
+| L | lien thong |
+|---|---|
+| 2-3 | 0.9537 |
+| 4-5 | 0.8531 |
+| **6-7** | **0.7211** |
+| **8-10** | **0.5502** |
+| 11-14 | 0.5743 |
+
+**Sut manh dung tu `L = 6-7`** -- khop voi tran `L <= 6.21` tinh tu dang thuc. Day la lan dau trong
+du an mot nguong du doan tu **ly thuyet thuan** khop voi mot cho vo trong du lieu.
+
+Day cung la **cung mot dang loi** voi Muc 43.4 (`d` cua tu the "tai tao phan bo bien cua train chinh
+xac"): mo hinh hoc **phan bo bien** thay vi **cau truc dieu kien**. Lan do o kenh hinh hoc, lan nay o
+kenh token.
+
+### 69.4 Rev 23: ban sua, va vi sao nó phai hoat dong
+
+Cho head token **biet trang thai pool** (so dummy tu do con lai cua phan tu dang dung) khi chon
+fragment tiep theo. Pool doi `d - 2` moi buoc (Muc 68.2).
+
+Khac voi dac trung kha dung cho **head lien ket** (Muc 67.2, khong hoc duoc duoi teacher forcing vi
+nhan that khong bao gio xung dot), dac trung nay **hoc duoc**: trong mot phan tu that, pool bien
+thien theo tung buoc DFS, va o cuoi phan tu pool **buoc phai** ve 0 do chinh dang thuc
+`sum(d) = 2(L-1)`. Tuc nhan huan luyen **co mang thong tin phan biet**: khi pool nho, buoc tiep theo
+bat buoc phai la fragment `d >= 2`; khi pool = 0 thi phai la `[EOS]`.
+
+Noi cach khac: **dang thuc 69.2 bien pool thanh mot dai luong du doan duoc `[EOS]` va rang buoc `d`
+tiep theo** -- dung thong tin mo hinh dang thieu.
+
+**Du doan ghi truoc (R5):**
+1. ty le vi pham `sum(d) < 2(L-1)` giam tu 21,42% xuong **duoi 5%**;
+2. `GOC CUONG BUC` giam tu 92,5% so GOC phu xuong **duoi 50%** (phan con lai chuyen sang
+   `MO HINH CHON`, luc do scheduled sampling moi dang lam);
+3. lien thong toan cuc len **0,88 - 0,93**;
+4. `d` trung binh **khong doi dang ke** (van ~1,68) -- vi dang thuc 69.2 khoa no; neu `d` trung binh
+   doi nhieu thi ban sua dang lam sai thu gi khac.
+
+Diem 4 la phep kiem co kha nang that bai quan trong nhat: no phan biet "mo hinh hoc dung rang buoc"
+voi "mo hinh chi chuyen sang thich fragment nhieu nhanh".
