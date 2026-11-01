@@ -215,27 +215,43 @@ def decode_links(link_logits, n_dum, greedy=True):
         e = e / e.sum()
         return int(np.random.choice(v.size, p=e))
 
+    # S14 (Rev 23) -- PHEP DO truoc khi sua kien truc. Moi GOC phu (t >= 1) thuoc mot trong hai loai,
+    # va hai loai nay can hai ban sua HOAN TOAN KHAC NHAU:
+    #   CHON   : con ung vien cha hop le, nhung mo hinh VAN cham diem cao nhat cho cot "goc".
+    #            => loi cua head `parent`, gan nhu chac la exposure bias.
+    #   CUONG  : khong con ung vien nao -- hoac fragment t khong con dummy tu do, hoac moi fragment
+    #            truoc do da bi tieu het dummy. Mo hinh khong duoc chon. => loi cua head TOKEN:
+    #            no chon chuoi fragment khong du diem gan. Sua `parent` se vo ich.
+    n_root_forced = 0
+    n_root_chosen = 0
+
     for t in range(T):
         free_self = set(range(min(n_dum[t], MAX_ATTACH))) - used[t]
-        if t == 0 or not free_self:
-            par.append(-1); a_s.append(None); a_p.append(None); continue
         cand = {0}
         for j in range(t):
             if set(range(min(n_dum[j], MAX_ATTACH))) - used[j]:
                 cand.add(j + 1)
+        co_ung_vien = (t >= 1) and bool(free_self) and len(cand) > 1
+
+        if t == 0 or not free_self or not co_ung_vien:
+            if t >= 1:
+                n_root_forced += 1
+            par.append(-1); a_s.append(None); a_p.append(None); continue
         c = pick(lp[t], cand)
         if c is None or c == 0:
+            n_root_chosen += 1
             par.append(-1); a_s.append(None); a_p.append(None); continue
         pj = c - 1
         free_par = set(range(min(n_dum[pj], MAX_ATTACH))) - used[pj]
         os_ = pick(ls[t], free_self)
         op_ = pick(la[t], free_par)
         if os_ is None or op_ is None:
+            n_root_forced += 1
             par.append(-1); a_s.append(None); a_p.append(None); continue
         used[t].add(os_)
         used[pj].add(op_)
         par.append(pj); a_s.append(os_); a_p.append(op_)
-    return par, a_s, a_p
+    return par, a_s, a_p, n_root_forced, n_root_chosen
 
 
 def build_mol_channel(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t,
@@ -260,7 +276,7 @@ def build_mol_channel(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t,
         place_info.append((R_g_to_w, center))
 
     n_dum = [n_dummies(e) for _, e in entries]
-    par, a_s, a_p = decode_links(link_logits, n_dum, greedy=greedy)
+    par, a_s, a_p, n_forced, n_chosen = decode_links(link_logits, n_dum, greedy=greedy)
     items = []
     for k, (smi, e) in enumerate(entries):
         pj = par[k]
@@ -274,6 +290,8 @@ def build_mol_channel(toks, poses, inv_vocab, frag_dict, pocket_R, pocket_t,
         })
     mol, diag = asm.assemble_by_channel(items, place_info=place_info)
     diag["n_goc"] = int(sum(1 for x in par if x < 0))
+    diag["goc_cuong_buc"] = int(n_forced)      # S14: het diem gan -> loi head TOKEN
+    diag["goc_mo_hinh_chon"] = int(n_chosen)   # S14: con ung vien -> loi head PARENT
     return mol, diag
 
 
@@ -541,6 +559,19 @@ def main():
             out["link_that_bai_mean"] = float(nf.mean())
             print(f"      so GOC trung binh: {ng.mean():.2f}  (1 = mot thanh phan; > 1 = mo hinh"
                   f" CHU DONG tra loi 'manh roi')")
+            # S14: tach GOC phu thanh hai loai, vi chung can hai ban sua khac nhau.
+            gf = np.array([x.get("goc_cuong_buc", 0) for x in diags])
+            gc = np.array([x.get("goc_mo_hinh_chon", 0) for x in diags])
+            tong = gf.sum() + gc.sum()
+            out["goc_cuong_buc_mean"] = float(gf.mean())
+            out["goc_mo_hinh_chon_mean"] = float(gc.mean())
+            print(f"      GOC phu tach theo nguyen nhan (tong {int(tong)}):")
+            print(f"        CUONG BUC (het diem gan, mo hinh khong duoc chon): {int(gf.sum())}"
+                  f"  = {gf.sum() / max(tong, 1) * 100:5.1f}%   [loi head TOKEN]")
+            print(f"        MO HINH CHON  (con ung vien cha hop le):           {int(gc.sum())}"
+                  f"  = {gc.sum() / max(tong, 1) * 100:5.1f}%   [loi head PARENT]")
+            print("        Hai loai nay can hai ban sua khac nhau: cuong buc => chon fragment co du"
+                  " diem gan; mo hinh chon => exposure bias cua head parent.")
             print(f"      link that bai trung binh: {nf.mean():.2f}  (dummy duoc chi khong ton tai"
                   f" hoac da bi chiem -- loi giai ma, khong phai loi pose)")
             print("      LUU Y: o che do channel, lien thong KHONG con phu thuoc pose (Muc 43.7)."

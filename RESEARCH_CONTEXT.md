@@ -5052,3 +5052,69 @@ chat luong hoa hoc do head token quyet dinh.
 
 QED con cach tran 0.075. Day la cho `Token_Loss` (1.8253 o ep 24, van con giam) va cac muc ve chat
 luong fragment se tac dong, khong phai cho kenh lien ket.
+
+---
+
+## Muc 67 -- Rev 23: hai suy luan lam doi han thu tu uu tien, TRUOC khi sua kien truc
+
+Toi dinh bat dau Rev 23 bang viec "cho ba head lien ket thay do thi dang dung" (Muc 55.3/56.3). Hai
+suy luan duoi day cho thay ke hoach do **sai thu tu**, va mot phan cua no **khong the hoat dong**.
+
+### 67.1 Head `attach_parent` khong he duoc dieu kien hoa theo CHA -- va sua no KHONG giup lien thong
+
+Doc lai `step4_ligand_generator.py`:
+
+```python
+logits_attach_parent = self.attach_parent_head(geo_in)   # [B, T, MAX_ATTACH]
+```
+
+Head nay phai chon **dummy nao cua fragment CHA** de gan vao, nhung dau vao chi la `geo_in[t]` --
+**khong mang bat ky thong tin nao ve cha**. No khong biet cha la fragment nao, co may dummy, hinh
+dang the nao. Day la mot khiem khuyet kien truc ro rang, va giai thich vi sao no la head te nhat:
+`AttachParent_Loss = 0.6546` (perplexity 1,92) so voi `AttachSelf_Loss = 0.4483` (1,57).
+
+**Nhung sua no se KHONG lam tang tinh lien thong.** Luc giai ma, `decode_links` da mask
+`attach_parent` ve cac dummy **con tu do** cua cha. Neu cha con du dummy thi **moi lua chon deu noi
+duoc**; chon dummy A hay B khong doi **so luong** dummy con lai (deu giam 1), chi doi **dummy nao**
+con lai. Va tinh lien thong chi phu thuoc **so luong**, khong phu thuoc danh tinh.
+
+Nen S14 (dieu kien hoa `attach_parent` theo cha) thuoc nhom **do trung thuc / chat luong hoa hoc**,
+khong thuoc nhom lien thong. Day la dieu phai ghi ro truoc khi lam, neu khong se lam roi tuong da
+sua dung cho ma lien thong khong nhuc nhich.
+
+### 67.2 Dac trung "con may dummy tu do" KHONG HOC DUOC duoi teacher forcing
+
+Ke hoach cu: them dac trung kha dung (so dummy tu do cua tung fragment) vao dau vao cac head.
+
+Duoi **teacher forcing**, nhan lien ket den tu phan manh **mot phan tu thuc**, nen chung **luon hop
+le**: moi dummy duoc dung nhieu nhat mot lan, va khong bao gio co xung dot. Dac trung "con tu do
+khong?" se **luon bang 'con'** o moi vi tri huan luyen. Mo hinh se hoc cach **bo qua** no, vi no
+khong mang thong tin phan biet.
+
+Dac trung do chi co gia tri khi mo hinh duoc nhin thay **loi cua chinh no** -- tuc phai di kem
+scheduled sampling. Vay hai muc toi tung liet ke rieng (kha dung + exposure bias) **khong doc lap**:
+chung la **mot cap**, va lam rieng muc kha dung truoc la lang phi mot lan huan luyen.
+
+### 67.3 Vay 24% con dut do dau? PHEP DO truoc, khong doan
+
+`n_goc = 1.27` nghia la 27% vi tri sinh ra mot GOC phu. Moi GOC phu o `t >= 1` thuoc dung mot trong
+hai loai, va chung can hai ban sua **hoan toan khac nhau**:
+
+| loai | dinh nghia | nguyen nhan | ban sua |
+|---|---|---|---|
+| **CUONG BUC** | khong con ung vien cha nao: hoac fragment `t` het dummy tu do, hoac moi fragment truoc do da bi tieu het dummy | **head TOKEN** chon chuoi fragment khong du diem gan | doi phan bo token / phat o muc so dummy |
+| **MO HINH CHON** | con ung vien cha hop le, nhung mo hinh van cham diem cao nhat cho cot "goc" | **head PARENT** | exposure bias (scheduled sampling) |
+
+`link that bai = 0.00` o moi lan chay **khong** do duoc viec nay: no dem cac phep gan **that bai**,
+con day la cac vi tri **khong bao gio thu gan**.
+
+Da them vao `decode_links` hai bo dem `goc_cuong_buc` / `goc_mo_hinh_chon` va in ty trong. **Khong
+can huan luyen lai** -- chay tren chinh checkpoint `epoch=024` da co.
+
+**Du doan ghi truoc (R5):** toi dat cuoc **CUONG BUC chiem phan lon, > 60%**. Can cu: `so GOC` bao
+hoa quanh 1,5-1,6 khi L >= 8 (Muc 66.4) thay vi tang tuyen tinh. Neu la loi doc lap cua head
+`parent` thi so GOC phai tang theo L; bao hoa thi hop voi mot **rang buoc bi cham toi** -- tuc het
+diem gan. Neu nguoc lai (MO HINH CHON > 60%) thi gia thuyet nay sai, va viec can lam la scheduled
+sampling chu khong phai dong vao phan bo token.
+
+Ket qua phep do nay quyet dinh toan bo Rev 23. Khong code gi them cho den khi co no.
